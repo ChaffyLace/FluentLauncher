@@ -57,41 +57,36 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.regular.AppsAddIn
 import fluent.ui.system.icons.regular.Delete
+import fluent.ui.system.icons.regular.Pin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.Collator
-import java.time.format.TextStyle
 import kotlin.math.roundToInt
-import kotlin.random.Random
-
-// ==============================================================================
-// APP GRID V11 - FLUENT DELETE ZONE & STABLE DRAG
-// ==============================================================================
 
 @Composable
 fun AppGrid(
     viewModel: AppViewModel = viewModel(),
-    state: LazyGridState,
-    columnCount: Int,
-    rowCount: Int,
-    iconSize: Float,
-    showLabels: Boolean,
-    searchQuery: String,
+    state: LazyGridState = rememberLazyGridState(),
+    columnCount: Int = 4,
+    rowCount: Int = 6,
+    iconSize: Float = 60f,
+    showLabels: Boolean = true,
+    searchQuery: String = "",
     accentColor: Color = Color(0xFF0078D4),
-    isVertical: Boolean = false
+    isVertical: Boolean = false,
+    onPinRequest: (AppModel) -> Unit = { viewModel.pinApp(it) },
+    onClose: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
-    // --- ÉTAT DU DRAG & DROP ---
     var draggingGlobalIndex by remember { mutableStateOf<Int?>(null) }
     var draggingOffset by remember { mutableStateOf(Offset.Zero) }
     var draggingItemInitialPos by remember { mutableStateOf(Offset.Zero) }
     var isHoveringDelete by remember { mutableStateOf(false) }
 
-    // --- DONNÉES ---
     val allApps by remember(viewModel.otherApps.value, searchQuery) {
         derivedStateOf {
             if (searchQuery.isEmpty()) viewModel.otherApps.value
@@ -100,7 +95,6 @@ fun AppGrid(
     }
 
     if (isVertical) {
-        // MODE VERTICAL (Lecture Seule)
         val appsByLetter by remember(allApps) {
             derivedStateOf { AppGrouper.groupByAlphabet(allApps) }
         }
@@ -115,19 +109,25 @@ fun AppGrid(
             appsByLetter.forEach { (letter, appList) ->
                 item(span = { GridItemSpan(maxLineSpan) }) { MicaSectionHeader(letter, isDark) }
                 items(appList) { app ->
-                    AppIconItem(app, iconSize, showLabels, accentColor, isDragging = false)
+                    AppIconItem(
+                        app = app,
+                        size = iconSize,
+                        showLabel = showLabels,
+                        accentColor = accentColor,
+                        isDragging = false,
+                        onPinRequest = onPinRequest,
+                        onClose = onClose ?: {}
+                    )
                 }
             }
         }
     } else {
-        // MODE HORIZONTAL (Drag & Drop Actif)
         val itemsPerPage = columnCount * rowCount
         val pages = remember(allApps, itemsPerPage) { allApps.chunked(itemsPerPage) }
         val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
 
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // 1. ZONE DE SUPPRESSION (DESIGN SEARCH PILL)
             AnimatedVisibility(
                 visible = draggingGlobalIndex != null,
                 enter = slideInVertically { -it } + fadeIn(),
@@ -135,17 +135,16 @@ fun AppGrid(
                 modifier = Modifier
                     .zIndex(1000f)
                     .align(Alignment.TopCenter)
-                    .padding(top = 48.dp) // Positionné comme la barre de recherche en haut
+                    .padding(top = 48.dp)
             ) {
                 FluentDeletePill(isHovering = isHoveringDelete, isDark = isDark)
             }
 
             Column(modifier = Modifier.fillMaxSize().padding(top = 50.dp)) {
-                // 2. PAGER
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.weight(1f),
-                    userScrollEnabled = draggingGlobalIndex == null, // IMPORTANT : Bloque le swipe horizontal quand on drag
+                    userScrollEnabled = draggingGlobalIndex == null,
                     beyondViewportPageCount = 1
                 ) { pageIndex ->
                     val pageApps = pages.getOrNull(pageIndex) ?: emptyList()
@@ -164,7 +163,6 @@ fun AppGrid(
                             val app = pageApps[localIndex]
                             val isBeingDragged = (draggingGlobalIndex == globalIndex)
 
-                            // Container de l'icône avec détection de position
                             Box(
                                 modifier = Modifier.onGloballyPositioned { coordinates ->
                                     if (isBeingDragged && draggingItemInitialPos == Offset.Zero) {
@@ -178,6 +176,8 @@ fun AppGrid(
                                     showLabel = showLabels,
                                     accentColor = accentColor,
                                     isDragging = isBeingDragged,
+                                    onPinRequest = onPinRequest,
+                                    onClose = onClose ?: {},
                                     onDragStart = {
                                         if (searchQuery.isEmpty()) {
                                             draggingGlobalIndex = globalIndex
@@ -187,10 +187,7 @@ fun AppGrid(
                                     },
                                     onDrag = { _, dragAmount ->
                                         draggingOffset += dragAmount
-
-                                        // --- LOGIQUE DE COLLISION ---
                                         val currentFingerPos = draggingItemInitialPos + draggingOffset
-                                        // Zone de détection plus large pour la poubelle
                                         isHoveringDelete = currentFingerPos.y < 350f
 
                                         if (!isHoveringDelete) {
@@ -202,12 +199,6 @@ fun AppGrid(
                                                 val targetLocal = localIndex + colShift + (rowShift * columnCount)
                                                 val targetGlobal = startIndex + targetLocal
 
-                                                if (targetLocal in pageApps.indices && targetGlobal != globalIndex) {
-                                                    viewModel.moveApp(globalIndex, targetGlobal)
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    draggingGlobalIndex = targetGlobal
-                                                    draggingOffset = Offset.Zero
-                                                }
                                             }
                                         }
                                     },
@@ -227,7 +218,6 @@ fun AppGrid(
                     }
                 }
 
-                // 3. INDICATEURS (DOTS)
                 if (pages.size > 1) {
                     Row(
                         modifier = Modifier.fillMaxWidth().height(40.dp).padding(bottom = 10.dp),
@@ -249,7 +239,6 @@ fun AppGrid(
                 Spacer(modifier = Modifier.height(100.dp))
             }
 
-            // 4. ICÔNE GHOST (CORRIGÉE : Pas de cercle moche)
             if (draggingGlobalIndex != null) {
                 val draggedApp = allApps.getOrNull(draggingGlobalIndex!!)
                 if (draggedApp != null) {
@@ -261,18 +250,7 @@ fun AppGrid(
                             .scale(if (isHoveringDelete) 0.8f else 1.15f)
                             .alpha(if (isHoveringDelete) 0.6f else 1.0f)
                     ) {
-                        // On affiche l'icône PURE, sans Box grise autour
-                        if (draggedApp.icon != null) {
-                            Image(
-                                bitmap = draggedApp.icon.asImageBitmap(),
-                                contentDescription = null,
-                                modifier = Modifier.size(iconSize.dp).shadow(12.dp, CircleShape),
-                                contentScale = ContentScale.Fit
-                            )
-                        } else {
-                            // Fallback propre
-                            Box(modifier = Modifier.size(iconSize.dp).background(Color.Gray, CircleShape))
-                        }
+                        InternalAppIcon(bitmap = draggedApp.icon, modifier = Modifier.size(iconSize.dp).shadow(12.dp, CircleShape))
                     }
                 }
             }
@@ -280,18 +258,11 @@ fun AppGrid(
     }
 }
 
-// ==============================================================================
-// COMPONENTS INDIVIDUELS
-// ==============================================================================
-
 @Composable
 private fun FluentDeletePill(isHovering: Boolean, isDark: Boolean) {
-    // Style identique à la Search Pill (Mica Effect)
     val baseMicaColor = if (isDark) Color(0xFF303030) else Color(0xFFF9F9F9)
     val startAlpha = if (isDark) 0.90f else 0.85f
     val endAlpha = if (isDark) 0.98f else 0.95f
-
-    // Si on survole, ça devient rouge, sinon style Search Pill normal
     val bgColor = if (isHovering) Color.Red.copy(0.9f) else baseMicaColor.copy(alpha = startAlpha)
     val contentColor = if (isHovering) Color.White else if (isDark) Color.White.copy(0.9f) else Color.Black.copy(0.9f)
     val borderColor = if (isHovering) Color.Red else if (isDark) Color.White.copy(0.15f) else Color.Black.copy(0.08f)
@@ -301,7 +272,7 @@ private fun FluentDeletePill(isHovering: Boolean, isDark: Boolean) {
         modifier = Modifier
             .scale(scale)
             .height(52.dp)
-            .width(180.dp) // Largeur fixe style pillule
+            .width(180.dp)
             .shadow(16.dp, CircleShape, spotColor = if(isDark) Color.Black.copy(0.5f) else Color.Black.copy(0.15f))
             .clip(CircleShape)
             .background(bgColor)
@@ -316,7 +287,7 @@ private fun FluentDeletePill(isHovering: Boolean, isDark: Boolean) {
             modifier = Modifier.size(24.dp)
         )
         Spacer(Modifier.width(12.dp))
-
+        Text("Désinstaller", color = contentColor, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -327,6 +298,8 @@ private fun AppIconItem(
     showLabel: Boolean,
     accentColor: Color,
     isDragging: Boolean,
+    onPinRequest: (AppModel) -> Unit,
+    onClose: () -> Unit,
     onDragStart: (Offset) -> Unit = {},
     onDrag: (change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Offset) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {}
@@ -361,8 +334,9 @@ private fun AppIconItem(
                         isPressed = false
                     },
                     onLongPress = {
-                        // Le Long Press est géré ici si on ne drag pas immédiatement
-                        // Mais la priorité est donnée au DragDetector ci-dessous
+                        showMenu = true
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isPressed = false
                     },
                     onTap = {
                         scope.launch { delay(50); AppLauncher.launch(context, view, app.packageName, iconPos, size) }
@@ -373,10 +347,11 @@ private fun AppIconItem(
                 detectDragGesturesAfterLongPress(
                     onDragStart = { offset ->
                         isPressed = true
+                        showMenu = false
                         onDragStart(offset)
                     },
                     onDrag = { change, dragAmount ->
-                        change.consume() // INDISPENSABLE pour que le Pager ne bouge pas
+                        change.consume()
                         onDrag(change, dragAmount)
                     },
                     onDragEnd = {
@@ -406,16 +381,21 @@ private fun AppIconItem(
             }
         }
 
-        // Context Menu (Seulement si pas de drag actif)
         if (showMenu && !isDragging) {
-            FluentContextMenu(app, iconPos, { showMenu = false }, isDark)
+            FluentContextMenu(
+                app = app,
+                iconPosition = iconPos,
+                onDismiss = { showMenu = false },
+                isDark = isDark,
+                onPin = {
+                    onPinRequest(app)
+                    showMenu = false
+                    onClose()
+                }
+            )
         }
     }
 }
-
-// ------------------------------------------------------------------------------
-// UTILITAIRES
-// ------------------------------------------------------------------------------
 
 @Composable
 private fun MicaSectionHeader(letter: Char, isDark: Boolean) {
@@ -437,7 +417,7 @@ fun InternalAppIcon(bitmap: Bitmap?, modifier: Modifier = Modifier) {
             bitmap = bitmap.asImageBitmap(),
             contentDescription = null,
             modifier = modifier,
-            contentScale = ContentScale.Fit // Assure que l'icône n'est pas déformée
+            contentScale = ContentScale.Fit
         )
     } else {
         Box(modifier = modifier.background(Color.Gray.copy(0.2f), CircleShape))
@@ -446,18 +426,47 @@ fun InternalAppIcon(bitmap: Bitmap?, modifier: Modifier = Modifier) {
 
 @SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
-private fun FluentContextMenu(app: AppModel, iconPosition: Offset, onDismiss: () -> Unit, isDark: Boolean) {
+private fun FluentContextMenu(
+    app: AppModel,
+    iconPosition: Offset,
+    onDismiss: () -> Unit,
+    isDark: Boolean,
+    onPin: () -> Unit
+) {
     val context = LocalContext.current
     val canFitAbove = iconPosition.y > 600f
     val bgColor = if (isDark) Color(0xFF1F1F1F).copy(0.98f) else Color(0xFFFEFEFE).copy(0.98f)
     val txtColor = if (isDark) Color.White.copy(0.9f) else Color.Black.copy(0.9f)
     val borderColor = if (isDark) Color.White.copy(0.12f) else Color.Black.copy(0.08f)
-    Popup(alignment = if (canFitAbove) Alignment.BottomCenter else Alignment.TopCenter, offset = IntOffset(0, if (canFitAbove) -180 else 180), onDismissRequest = onDismiss, properties = PopupProperties(focusable = true, dismissOnClickOutside = true, clippingEnabled = false)) {
-        Column(Modifier.width(220.dp).clip(RoundedCornerShape(12.dp)).background(bgColor).border(1.dp, borderColor, RoundedCornerShape(12.dp)).padding(vertical = 4.dp)) {
-            MenuItem(FluentIcons.Regular.AppsAddIn, "Widgets", txtColor, onDismiss)
+
+    Popup(
+        alignment = if (canFitAbove) Alignment.BottomCenter else Alignment.TopCenter,
+        offset = IntOffset(0, if (canFitAbove) -180 else 180),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, dismissOnClickOutside = true, clippingEnabled = false)
+    ) {
+        Column(
+            Modifier.width(220.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(bgColor)
+                .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                .padding(vertical = 4.dp)
+        ) {
+            MenuItem(FluentIcons.Regular.Pin, "Épingler à l'accueil", txtColor) {
+                onPin()
+            }
+
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = borderColor, thickness = 0.5.dp)
-            MenuItem(Icons.Default.Info, "Infos App", txtColor) { AppActions.openAppInfo(context, app.packageName); onDismiss() }
-            MenuItem(Icons.Default.Delete, "Désinstaller", txtColor) { AppActions.uninstallApp(context, app.packageName); onDismiss() }
+
+            MenuItem(Icons.Default.Info, "Infos App", txtColor) {
+                AppActions.openAppInfo(context, app.packageName)
+                onDismiss()
+            }
+
+            MenuItem(Icons.Default.Delete, "Désinstaller", txtColor) {
+                AppActions.uninstallApp(context, app.packageName)
+                onDismiss()
+            }
         }
     }
 }

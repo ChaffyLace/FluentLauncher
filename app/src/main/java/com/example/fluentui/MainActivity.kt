@@ -14,7 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.example.fluentui.ui.components.LauncherScreen
-import com.example.fluentui.ui.theme.FluentUITheme // [IMPORTANT] L'import correspond au fichier Theme.kt
+import com.example.fluentui.ui.theme.FluentUITheme
 
 class MainActivity : ComponentActivity() {
 

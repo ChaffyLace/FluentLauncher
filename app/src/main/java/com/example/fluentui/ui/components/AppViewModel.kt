@@ -3,181 +3,112 @@ package com.example.fluentui.ui.components
 import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
-import android.util.Log
-import androidx.compose.runtime.State
+import android.graphics.drawable.BitmapDrawable
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.graphics.drawable.toBitmap
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Collections
+import java.util.UUID
 
-// Extension pour DataStore
-private val Application.appOrderDataStore by preferencesDataStore("app_order")
+private val Application.appDataStore by preferencesDataStore("launcher_data_final")
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val pm: PackageManager = application.packageManager
-    private val dataStore = application.appOrderDataStore
 
-    private val _otherApps = mutableStateOf<List<AppModel>>(emptyList())
-    val otherApps: State<List<AppModel>> = _otherApps
+    // Le tiroir d'applications (Lecture seule, on ne touche pas)
+    val otherApps = mutableStateOf<List<AppModel>>(emptyList())
 
-    private val _pinnedApps = mutableStateOf<List<AppModel>>(emptyList())
-    val pinnedApps: State<List<AppModel>> = _pinnedApps
+    // Le Dashboard (Modifiable : contient des Apps, des Widgets ET DES VIDES)
+    val dashboardTiles = mutableStateListOf<TileConfig>()
 
     init {
-        loadApps()
+        loadInstalledApps()
+        loadDashboard()
     }
 
-    /**
-     * Charge toutes les apps depuis le PackageManager
-     * et applique l'ordre sauvegardé si disponible
-     */
-    private fun loadApps() {
+    private fun loadInstalledApps() {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // 1. Récupérer toutes les apps
-                val intent = Intent(Intent.ACTION_MAIN, null).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                }
-                val activities = pm.queryIntentActivities(intent, 0)
-
-                // 2. Charger l'ordre sauvegardé
-                val savedOrder = loadAppOrder()
-
-                // 3. Convertir en AppModel
-                val appsMap = activities.associate { resolveInfo ->
-                    val pkg = resolveInfo.activityInfo.packageName
-                    pkg to toAppModel(resolveInfo)
-                }
-
-                // 4. Appliquer l'ordre sauvegardé OU ordre alphabétique par défaut
-                val orderedApps = if (savedOrder.isNotEmpty()) {
-                    // Utiliser l'ordre sauvegardé
-                    val orderedList = savedOrder.mapNotNull { pkg -> appsMap[pkg] }
-
-                    // Ajouter les nouvelles apps à la fin (pas dans l'ordre sauvegardé)
-                    val newApps = appsMap.values.filter { app ->
-                        app.packageName !in savedOrder
-                    }.sortedBy { it.label.lowercase() }
-
-                    orderedList + newApps
-                } else {
-                    // Premier lancement : ordre alphabétique
-                    appsMap.values.sortedBy { it.label.lowercase() }
-                }
-
-                // 5. Sauvegarder l'ordre initial si c'était vide
-                if (savedOrder.isEmpty()) {
-                    saveAppOrder(orderedApps.map { it.packageName })
-                }
-
-                withContext(Dispatchers.Main) {
-                    _otherApps.value = orderedApps
-                    _pinnedApps.value = orderedApps.take(8)
-                }
-
-                Log.d("AppViewModel", "Loaded ${orderedApps.size} apps")
-            } catch (e: Exception) {
-                Log.e("AppViewModel", "Error loading apps", e)
-            }
+            val intent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+            val activities = pm.queryIntentActivities(intent, 0)
+            val apps = activities.map { resolveInfo ->
+                AppModel(
+                    resolveInfo.loadLabel(pm).toString(),
+                    resolveInfo.activityInfo.packageName,
+                    resolveInfo.loadIcon(pm).toBitmap()
+                )
+            }.sortedBy { it.label.lowercase() }
+            withContext(Dispatchers.Main) { otherApps.value = apps }
         }
     }
 
-    /**
-     * Déplace une app de fromIndex vers toIndex
-     * et sauvegarde immédiatement le nouvel ordre
-     */
-    fun moveApp(fromIndex: Int, toIndex: Int) {
-        val currentList = _otherApps.value.toMutableList()
-
-        if (fromIndex !in currentList.indices || toIndex !in currentList.indices) {
-            Log.w("AppViewModel", "Invalid indices: from=$fromIndex, to=$toIndex, size=${currentList.size}")
-            return
-        }
-
-        // Déplacement intelligent (comme iOS)
-        if (fromIndex < toIndex) {
-            for (i in fromIndex until toIndex) {
-                Collections.swap(currentList, i, i + 1)
-            }
-        } else {
-            for (i in fromIndex downTo toIndex + 1) {
-                Collections.swap(currentList, i, i - 1)
-            }
-        }
-
-        // Mise à jour du state
-        _otherApps.value = currentList
-
-        // Sauvegarde asynchrone
+    private fun loadDashboard() {
         viewModelScope.launch(Dispatchers.IO) {
-            saveAppOrder(currentList.map { it.packageName })
-            Log.d("AppViewModel", "App order saved: moved $fromIndex -> $toIndex")
-        }
-    }
+            // ON CRÉE UNE GRILLE FIXE DE 24 CASES (4 colonnes x 6 lignes)
+            // On remplit tout avec du VIDE (EMPTY) par défaut
+            val tiles = MutableList(24) {
+                TileConfig(UUID.randomUUID().toString(), "", size = TileSize.SMALL, type = TileType.EMPTY)
+            }
 
-    /**
-     * Réinitialise l'ordre alphabétique
-     */
-    fun resetOrder() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val sorted = _otherApps.value.sortedBy { it.label.lowercase() }
+            // On place les widgets par défaut au début
+            val widgets = getHardcodedWidgets()
+            widgets.forEachIndexed { index, widget ->
+                if (index < tiles.size) tiles[index] = widget
+            }
+
             withContext(Dispatchers.Main) {
-                _otherApps.value = sorted
+                dashboardTiles.clear()
+                dashboardTiles.addAll(tiles)
             }
-            saveAppOrder(sorted.map { it.packageName })
-            Log.d("AppViewModel", "Order reset to alphabetical")
         }
     }
 
-    /**
-     * Sauvegarde l'ordre des apps dans DataStore
-     */
-    private suspend fun saveAppOrder(packageNames: List<String>) {
-        try {
-            dataStore.edit { prefs ->
-                prefs[APP_ORDER_KEY] = packageNames.joinToString(",")
-            }
-        } catch (e: Exception) {
-            Log.e("AppViewModel", "Error saving app order", e)
+    // --- ACTIONS WINDOWS ---
+
+    // 1. Épingler (Remplace la première case vide trouvée)
+    fun pinApp(app: AppModel) {
+        val emptyIndex = dashboardTiles.indexOfFirst { it.type == TileType.EMPTY }
+        if (emptyIndex != -1) {
+            val iconDrawable = if (app.icon != null) BitmapDrawable(getApplication<Application>().resources, app.icon) else pm.getDefaultActivityIcon()
+
+            dashboardTiles[emptyIndex] = TileConfig(
+                id = UUID.randomUUID().toString(),
+                title = app.label,
+                icon = TileIcon.AndroidIcon(iconDrawable),
+                size = TileSize.SMALL,
+                type = TileType.APP,
+                packageName = app.packageName
+            )
         }
     }
 
-    /**
-     * Charge l'ordre sauvegardé depuis DataStore
-     */
-    private suspend fun loadAppOrder(): List<String> {
-        return try {
-            val prefs = dataStore.data.first()
-            val orderString = prefs[APP_ORDER_KEY] ?: ""
-            if (orderString.isBlank()) emptyList()
-            else orderString.split(",")
-        } catch (e: Exception) {
-            Log.e("AppViewModel", "Error loading app order", e)
-            emptyList()
+    // 2. Drag & Drop (Echange deux cases, même si l'une est vide)
+    fun swapTiles(fromIndex: Int, toIndex: Int) {
+        if (fromIndex in dashboardTiles.indices && toIndex in dashboardTiles.indices && fromIndex != toIndex) {
+            val fromItem = dashboardTiles[fromIndex]
+            val toItem = dashboardTiles[toIndex]
+            dashboardTiles[fromIndex] = toItem
+            dashboardTiles[toIndex] = fromItem
         }
     }
 
-    private fun toAppModel(resolveInfo: ResolveInfo): AppModel {
-        val packageName = resolveInfo.activityInfo.packageName
-        val label = resolveInfo.loadLabel(pm).toString()
-
-        // --- CORRECTION ICI ---
-        // On convertit le Drawable en Bitmap
-        val icon = resolveInfo.loadIcon(pm).toBitmap()
-
-        return AppModel(label, packageName, icon)
+    // 3. Redimensionner (Via le menu contextuel)
+    fun resizeTile(id: String, newSize: TileSize) {
+        val index = dashboardTiles.indexOfFirst { it.id == id }
+        if (index != -1) {
+            dashboardTiles[index] = dashboardTiles[index].copy(size = newSize)
+        }
     }
 
-    companion object {
-        private val APP_ORDER_KEY = stringPreferencesKey("app_order")
+    // 4. Désépingler (Remplace la tuile par du VIDE)
+    fun unpinTile(id: String) {
+        val index = dashboardTiles.indexOfFirst { it.id == id }
+        if (index != -1) {
+            dashboardTiles[index] = TileConfig(UUID.randomUUID().toString(), "", size = TileSize.SMALL, type = TileType.EMPTY)
+        }
     }
 }

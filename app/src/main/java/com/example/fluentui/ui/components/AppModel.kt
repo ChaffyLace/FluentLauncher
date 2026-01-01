@@ -11,3 +11,4 @@ data class AppModel(
     val userHandle: UserHandle = Process.myUserHandle(),
     val isSystemApp: Boolean = false
 )
+

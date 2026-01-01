@@ -237,7 +237,7 @@ fun rememberSystemWallpaper(context: Context): Pair<Bitmap?, Bitmap?> {
 /**
  * Singleton utilitaire pour l'extraction de palette (Material You / Fluent logic).
  */
-private object ColorExtractor {
+object ColorExtractor {
     fun extractSmartColor(bitmap: Bitmap, isDark: Boolean): Color {
         return runCatching {
             val small = Bitmap.createScaledBitmap(bitmap, 50, 50, false)
@@ -257,7 +257,7 @@ private object ColorExtractor {
  * Générateur de texture de bruit procédurale (Noise).
  * Utilise un cache pour éviter de régénérer le Shader à chaque appel.
  */
-private object NoiseGenerator {
+object NoiseGenerator {
     private val shaderCache = mutableMapOf<Boolean, ShaderBrush>()
 
     fun generate(isDark: Boolean): ShaderBrush {
@@ -284,7 +284,7 @@ private object NoiseGenerator {
 /**
  * Configuration des constantes visuelles pour l'effet Mica.
  */
-private data class EffectConfig(
+data class EffectConfig(
     val surfaceColor: Color,
     val surfaceAlpha: Float,
     val tintAlpha: Float,

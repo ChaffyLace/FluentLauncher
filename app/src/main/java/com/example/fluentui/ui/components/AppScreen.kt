@@ -248,6 +248,9 @@ private fun ContentPager(
     blurredWallpaper: Bitmap?,
     modifier: Modifier = Modifier
 ) {
+    // Nécessaire pour l'animation de retour au dashboard
+    val scope = rememberCoroutineScope()
+
     VerticalPager(
         state = state.pagerState,
         modifier = modifier,
@@ -289,7 +292,7 @@ private fun ContentPager(
                     showLabels = userPreferences.showLabels,
                     searchQuery = "",
                     accentColor = userPreferences.accentColor,
-                    isVertical = userPreferences.isVertical
+                    isVertical = userPreferences.isVertical,
                 )
             }
         }
