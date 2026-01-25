@@ -3,23 +3,32 @@ package com.example.fluentui.ui.utils
 import android.graphics.Bitmap
 import android.util.LruCache
 
+/**
+ * Gestionnaire de mémoire pour les icônes.
+ * Évite de recharger les images à chaque scroll.
+ * Utilise 1/8ème de la mémoire disponible du téléphone.
+ */
 object IconCache {
     private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
     private val cacheSize = maxMemory / 8
 
-    private val memoryCache = object : LruCache<String, Bitmap>(cacheSize) {
+    private val cache = object : LruCache<String, Bitmap>(cacheSize) {
         override fun sizeOf(key: String, bitmap: Bitmap): Int {
             return bitmap.byteCount / 1024
         }
     }
 
-    fun getBitmap(key: String): Bitmap? {
-        return memoryCache.get(key)
+    fun get(packageName: String): Bitmap? {
+        return cache.get(packageName)
     }
 
-    fun putBitmap(key: String, bitmap: Bitmap) {
-        if (getBitmap(key) == null) {
-            memoryCache.put(key, bitmap)
+    fun put(packageName: String, bitmap: Bitmap) {
+        if (get(packageName) == null) {
+            cache.put(packageName, bitmap)
         }
+    }
+
+    fun clear() {
+        cache.evictAll()
     }
 }

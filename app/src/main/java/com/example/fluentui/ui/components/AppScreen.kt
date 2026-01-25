@@ -1,91 +1,114 @@
 package com.example.fluentui.ui.components
 
-import android.app.Activity
 import android.app.Application
-import android.graphics.Bitmap
-import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.fluentui.data.SettingsManager
+import com.example.fluentui.ui.homescreen.DashboardPage
 import com.example.fluentui.ui.motion.FluentReveal
 import com.example.fluentui.ui.search.*
-import com.example.fluentui.ui.theme.AppTheme
+import com.example.fluentui.ui.settings.SettingsOverlay
+import com.example.fluentui.ui.settings.SettingsState
+import com.example.fluentui.ui.settings.SettingsViewModel
 import com.example.fluentui.ui.theme.FluentMotion
+import com.example.fluentui.wallpaper.MicaParams
 import com.example.fluentui.wallpaper.WallpaperLayer
-import com.example.fluentui.wallpaper.rememberSystemWallpaper
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun LauncherScreen() {
+fun AppScreen(
+    viewModel: AppViewModel = viewModel(),
+    settingsViewModel: SettingsViewModel = viewModel(),
+    onOpenGallery: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDark = isSystemInDarkTheme()
+    val settingsManager = remember { SettingsManager(context) }
+
+    // --- Settings Collection ---
+    val wpType by settingsManager.wallpaperType.collectAsState("SOLID")
+    val wpValue by settingsManager.wallpaperValue.collectAsState("-16777216")
+    val accentColorInt by settingsManager.accentColor.collectAsState(0xFF60CDFF.toInt())
+    val transparencyEnabled by settingsManager.transparencyEnabled.collectAsState(true)
+    val hiddenApps by settingsManager.hiddenApps.collectAsState(emptySet())
+    val colCount by settingsManager.columnCount.collectAsState(4)
+    val rowCount by settingsManager.rowCount.collectAsState(6)
+    val iconSize by settingsManager.iconSize.collectAsState(60f)
+    val showLabels by settingsManager.showLabels.collectAsState(true)
+    val isVertical by settingsManager.isVerticalScroll.collectAsState(false)
+    val fontSize by settingsManager.fontSize.collectAsState(13f)
+    val vSpacing by settingsManager.verticalSpacing.collectAsState(16f)
+
+    val settingsState = SettingsState(
+        wallpaperType = wpType,
+        wallpaperValue = wpValue,
+        accentColor = Color(accentColorInt),
+        transparencyEnabled = transparencyEnabled,
+        columnCount = colCount,
+        rowCount = rowCount,
+        iconSize = iconSize,
+        fontSize = fontSize,
+        showLabels = showLabels,
+        isVertical = isVertical,
+        verticalSpacing = vSpacing,
+        hiddenApps = hiddenApps
+    )
 
     SystemBarController(isDark)
 
-    val wallpaperData = rememberSystemWallpaper(context)
-    val wallpaperBitmap = wallpaperData.first
-    val blurredWallpaperBitmap = wallpaperData.second
+    // Pager : 0 = Dashboard, 1 = Apps List
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
 
-    val launcherState = rememberLauncherState()
-    val settingsManager = remember { SettingsManager(context) }
+    // --- NAVIGATION LISTENER (Home Button) ---
+    LaunchedEffect(Unit) {
+        viewModel.navigationEvent.collect { event ->
+            when (event) {
+                is NavigationEvent.ScrollToHome -> {
+                    if (pagerState.currentPage != 0) {
+                        // Retour ultra-rapide au dashboard
+                        pagerState.animateScrollToPage(0, 0f, spring(stiffness = Spring.StiffnessMedium))
+                    }
+                }
+            }
+        }
+    }
 
-    val appViewModel: AppViewModel = viewModel()
-    val allApps by appViewModel.otherApps
-    val searchViewModel: SearchViewModel = viewModel(
-        factory = SearchViewModel.Factory(context.applicationContext as Application)
-    )
+    val allApps by viewModel.otherApps
+    val searchViewModel: SearchViewModel = viewModel(factory = SearchViewModel.Factory(context.applicationContext as Application))
     val searchState by searchViewModel.uiState.collectAsState()
 
     LaunchedEffect(allApps) { searchViewModel.updateApps(allApps) }
 
-    val columnCount by settingsManager.columnCount.collectAsState(initial = 4)
-    val rowCount by settingsManager.rowCount.collectAsState(initial = 6)
-    val iconSize by settingsManager.iconSize.collectAsState(initial = 60f)
-    val showLabels by settingsManager.showLabels.collectAsState(initial = true)
-    val accentColorInt by settingsManager.accentColor.collectAsState(initial = 0xFF0078D4.toInt())
-    val isVertical by settingsManager.isVerticalScroll.collectAsState(initial = false)
-    val accentColor = Color(accentColorInt)
-
-    val userPreferences = remember(columnCount, rowCount, iconSize, showLabels, accentColor, isVertical) {
-        UserPreferences(columnCount, rowCount, iconSize, showLabels, isVertical, accentColor)
-    }
+    val micaParams by viewModel.micaParams.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
-    val isDashboard = launcherState.pagerState.currentPage == 0
+    val isDashboard = pagerState.currentPage == 0
     val isSearchVisible = isSearchActive || searchState.query.isNotEmpty()
-
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -96,231 +119,109 @@ fun LauncherScreen() {
         keyboardController?.hide()
     }
 
-    fun navigateToPage(page: Int) {
-        scope.launch {
-            launcherState.pagerState.animateScrollToPage(
-                page = page,
-                animationSpec = FluentMotion.pageScrollSpec()
-            )
-        }
-    }
-
     BackHandler(enabled = true) {
         when {
             showSettings -> showSettings = false
             isSearchVisible -> closeSearch()
-            !isDashboard -> navigateToPage(0)
+            !isDashboard -> scope.launch { pagerState.animateScrollToPage(0) }
         }
     }
 
-    val rawProgress by remember {
-        derivedStateOf {
-            val current = launcherState.pagerState.currentPage.toFloat()
-            val offset = launcherState.pagerState.currentPageOffsetFraction
-            if (isSearchVisible) 1f else (current + offset).coerceIn(0f, 1f)
-        }
-    }
+    // Wallpaper Animation
+    val rawProgress by remember { derivedStateOf { if (isSearchVisible) 1f else (pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f) } }
+    val motionProgress by animateFloatAsState(targetValue = rawProgress, animationSpec = FluentMotion.pageScrollSpec(), label = "MotionProgress")
+    val contentAlpha by animateFloatAsState(if (isSearchVisible) 0f else 1f, FluentMotion.enterSpec(FluentMotion.DurationFast), label = "alpha")
 
-    val motionProgress by animateFloatAsState(
-        targetValue = rawProgress,
-        animationSpec = FluentMotion.pageScrollSpec(),
-        label = "MotionProgress"
-    )
+    Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { if (isSearchVisible) closeSearch() } }) {
 
-    val contentAlpha by animateFloatAsState(
-        targetValue = if (isSearchVisible) 0f else 1f,
-        animationSpec = FluentMotion.enterSpec(FluentMotion.DurationFast),
-        label = "ContentAlpha"
-    )
+        // 1. Wallpaper Layer
+        WallpaperLayer(settings = settingsState, isDark = isDark, scrollProgress = motionProgress)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures { if (isSearchVisible) closeSearch() }
-            }
-            .then(
-                if (!isSearchVisible) {
-                    Modifier.pointerInteropFilter { event ->
-                        if (event.action == MotionEvent.ACTION_SCROLL) {
-                            val scrollY = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                            when {
-                                scrollY < 0 && isDashboard -> { navigateToPage(1); true }
-                                scrollY > 0 && !isDashboard -> { navigateToPage(0); true }
-                                else -> false
-                            }
-                        } else false
-                    }
-                } else Modifier
-            )
-    ) {
-        // LAYER 0: Wallpaper
-        if (wallpaperBitmap != null) {
-            WallpaperLayer(
-                sharpBitmap = wallpaperBitmap,
-                blurredBitmap = blurredWallpaperBitmap,
-                motionProgress = motionProgress,
-                isDark = isDark
-            )
-        } else {
-            Box(Modifier.fillMaxSize().background(Color.Black))
-        }
+        // 2. Content (Dashboard + App List)
+        Box(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha }) {
+            VerticalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                pageSpacing = 0.dp,
+                // --- TUNING PHYSIQUE AGRESSIF (PRO) ---
+                flingBehavior = PagerDefaults.flingBehavior(
+                    state = pagerState,
+                    // 1. Seuil critique à 5% : Le moindre mouvement valide le changement
+                    snapPositionalThreshold = 0.05f,
 
-        // LAYER 1: Content Pager (Dashboard & Apps)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = contentAlpha }
-        ) {
-            ContentPager(
-                state = launcherState,
-                viewModel = appViewModel,
-                userPreferences = userPreferences,
-                blurredWallpaper = blurredWallpaperBitmap,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // LAYER 2: Search Overlay (Background & Results)
-        FluentReveal(
-            visible = isSearchVisible,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(
-                modifier = Modifier
+                    // 2. Ressort tendu (StiffnessHigh) : Ça claque immédiatement, pas de flottement
+                    snapAnimationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessHigh
+                    )
+                )
+            ) { page ->
+                Box(modifier = Modifier
                     .fillMaxSize()
-                    .background(if (isDark) Color.Black.copy(0.4f) else Color.White.copy(0.4f))
-                    .statusBarsPadding()
-                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                        closeSearch()
-                    }
-            ) {
-                if (searchState.query.isEmpty()) {
-                    SearchDashboard(allApps, { pkg ->
-                        context.packageManager.getLaunchIntentForPackage(pkg)?.let {
-                            context.startActivity(it); closeSearch()
+                    .graphicsLayer {
+                        // --- TRANSITION WINDOWS 11 ---
+                        val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+
+                        if (page == 0) {
+                            // Le Dashboard monte un peu moins vite (Parallaxe 0.3) et s'efface vite
+                            translationY = pageOffset * size.height * 0.3f
+                            val scale = 1f - (pageOffset.absoluteValue * 0.05f)
+                            scaleX = scale
+                            scaleY = scale
+                            // Fade Out agressif pour ne pas voir le dashboard en transparence trop longtemps
+                            alpha = (1f - pageOffset.absoluteValue * 3f).coerceIn(0f, 1f)
                         }
-                    }, isDark)
-                } else {
-                    SearchResultsList(searchState.results, isDark, accentColor, Modifier.fillMaxSize().padding(bottom = 100.dp))
+                        // Page 1 (AppGrid) reste normale (elle passe par dessus grâce au Z-order)
+                    }
+                ) {
+                    when (page) {
+                        0 -> DashboardPage(viewModel = viewModel)
+                        1 -> AppGridWrapper(viewModel, settingsManager, micaParams)
+                    }
                 }
             }
         }
 
-        // LAYER 3: Search Pill (Floating UI)
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp)
-                .imePadding()
-        ) {
-            FluentSearchPill(
-                searchQuery = searchState.query,
-                onQueryChange = { query ->
-                    searchViewModel.onQueryChange(query)
-                    if (!isSearchActive && query.isNotEmpty()) isSearchActive = true
-                },
-                onSettingsClick = { showSettings = true },
-                onFocusChange = { if (it) isSearchActive = true },
-                isDark = isDark
-            )
+        // 3. Search Overlay
+        FluentReveal(visible = isSearchVisible, modifier = Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().background(if (isDark) Color.Black.copy(0.6f) else Color.White.copy(0.6f)).statusBarsPadding().clickable(null, null) { closeSearch() }) {
+                if (searchState.query.isEmpty()) SearchDashboard(allApps, { context.packageManager.getLaunchIntentForPackage(it)?.let { i -> context.startActivity(i); closeSearch() } }, isDark)
+                else SearchResultsList(searchState.results, isDark, Color(accentColorInt), Modifier.fillMaxSize().padding(bottom = 100.dp))
+            }
         }
 
-        // LAYER 4: Settings Modal
+        // 4. Search Pill
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp).imePadding()) {
+            FluentSearchPill(searchState.query, { searchViewModel.onQueryChange(it); if (!isSearchActive && it.isNotEmpty()) isSearchActive = true }, { showSettings = true }, { if (it) isSearchActive = true }, isDark)
+        }
+
+        // 5. Settings Overlay
         if (showSettings) {
-            ModalBottomSheet(
-                onDismissRequest = { showSettings = false },
-                containerColor = Color.Transparent,
-                dragHandle = null
-            ) {
-                SettingsContent { showSettings = false }
-            }
+            SettingsOverlay(showSettings, micaParams, allApps, { showSettings = false }, settingsViewModel, onOpenGallery)
         }
     }
 }
 
 @Composable
-private fun ContentPager(
-    state: LauncherState,
-    viewModel: AppViewModel,
-    userPreferences: UserPreferences,
-    blurredWallpaper: Bitmap?,
-    modifier: Modifier = Modifier
-) {
-    // Nécessaire pour l'animation de retour au dashboard
-    val scope = rememberCoroutineScope()
+fun AppGridWrapper(viewModel: AppViewModel, settingsManager: SettingsManager, micaParams: MicaParams) {
+    val colCount by settingsManager.columnCount.collectAsState(4)
+    val rowCount by settingsManager.rowCount.collectAsState(6)
+    val iconSize by settingsManager.iconSize.collectAsState(60f)
+    val showLabels by settingsManager.showLabels.collectAsState(true)
+    val isVertical by settingsManager.isVerticalScroll.collectAsState(false)
+    val accentColorInt by settingsManager.accentColor.collectAsState(0xFF60CDFF.toInt())
+    val hiddenApps by settingsManager.hiddenApps.collectAsState(emptySet())
+    val fontSize by settingsManager.fontSize.collectAsState(13f)
+    val vSpacing by settingsManager.verticalSpacing.collectAsState(16f)
 
-    VerticalPager(
-        state = state.pagerState,
-        modifier = modifier,
-        key = { it },
-        beyondViewportPageCount = 1,
-        userScrollEnabled = true
-    ) { page ->
-        val pageOffset = remember(state.pagerState.currentPage, state.pagerState.currentPageOffsetFraction) {
-            (state.pagerState.currentPage - page) + state.pagerState.currentPageOffsetFraction
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    if (page == 0) {
-                        val absOffset = pageOffset.absoluteValue
-                        val scale = lerp(1f, 0.95f, absOffset)
-                        scaleX = scale
-                        scaleY = scale
-                        alpha = lerp(1f, 0.0f, absOffset)
-                        translationY = pageOffset * 50f
-                    }
-                }
-        ) {
-            when (page) {
-                0 -> DashboardPage(
-                    viewModel = viewModel,
-                    blurredWallpaper = blurredWallpaper,
-                    theme = if (isSystemInDarkTheme()) AppTheme.WINDOWS_DARK else AppTheme.WINDOWS_LIGHT
-                )
-
-                1 -> AppGrid(
-                    viewModel = viewModel,
-                    state = state.gridState,
-                    columnCount = userPreferences.columnCount,
-                    rowCount = userPreferences.rowCount,
-                    iconSize = userPreferences.iconSize,
-                    showLabels = userPreferences.showLabels,
-                    searchQuery = "",
-                    accentColor = userPreferences.accentColor,
-                    isVertical = userPreferences.isVertical,
-                )
-            }
-        }
-    }
+    AppGrid(
+        viewModel = viewModel, columnCount = colCount, rowCount = rowCount, iconSize = iconSize, showLabels = showLabels, accentColor = Color(accentColorInt), isVertical = isVertical, fontSize = fontSize, verticalSpacing = vSpacing, hiddenApps = hiddenApps, onPinRequest = { viewModel.pinApp(it) },
+        micaParams = micaParams
+    )
 }
 
 @Composable
 private fun SystemBarController(isDark: Boolean) {
     val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
-            val insets = WindowCompat.getInsetsController(window, view)
-            insets.isAppearanceLightStatusBars = !isDark
-            insets.isAppearanceLightNavigationBars = !isDark
-        }
-    }
+    if (!view.isInEditMode) { SideEffect { (view.context as android.app.Activity).window.let { w -> androidx.core.view.WindowCompat.getInsetsController(w, view).apply { isAppearanceLightStatusBars = !isDark; isAppearanceLightNavigationBars = !isDark } } } }
 }
-
-@Composable
-private fun rememberLauncherState(): LauncherState {
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
-    val gridState = rememberLazyGridState()
-    return remember(pagerState, gridState) { LauncherState(pagerState, gridState) }
-}
-
-private data class LauncherState(val pagerState: PagerState, val gridState: LazyGridState)
-private data class UserPreferences(
-    val columnCount: Int, val rowCount: Int, val iconSize: Float,
-    val showLabels: Boolean, val isVertical: Boolean, val accentColor: Color
-)

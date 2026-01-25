@@ -9,16 +9,19 @@ import androidx.compose.ui.platform.LocalView
 
 class HapticsManager(private val view: View) {
     fun performPress() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
         } else {
-            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         }
     }
 
     fun performRelease() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
+
+    fun performSliderTick() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
     }
 }

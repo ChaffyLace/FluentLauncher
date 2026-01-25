@@ -95,7 +95,7 @@ class TextNormalizer {
 }
 
 // ==============================================================================
-// STRATEGY 1: MATH (Priorité 100)
+// STRATEGY 1: MATH (Priority 100)
 // ==============================================================================
 
 class MathStrategy(
@@ -126,7 +126,7 @@ class MathStrategy(
 }
 
 // ==============================================================================
-// STRATEGY 2: CONVERTER (Priorité 95)
+// STRATEGY 2: CONVERTER (Priority 95)
 // ==============================================================================
 
 class ConverterStrategy(
@@ -179,7 +179,7 @@ class ConverterStrategy(
 }
 
 // ==============================================================================
-// STRATEGY 3: APPS (Priorité 90)
+// STRATEGY 3: APPS (Priority 90)
 // ==============================================================================
 
 class AppStrategy(
@@ -202,7 +202,8 @@ class AppStrategy(
                     title = app.label,
                     subtitle = "Application",
                     type = ResultType.APP,
-                    iconData = app.icon,
+                    // FIX: Pass null here. The UI will use the package name (id) to load the icon.
+                    iconData = null,
                     intentData = app.packageName,
                     score = score,
                     strategyPriority = priority
@@ -213,7 +214,7 @@ class AppStrategy(
 }
 
 // ==============================================================================
-// STRATEGY 4: SETTINGS (Priorité 85)
+// STRATEGY 4: SETTINGS (Priority 85)
 // ==============================================================================
 
 class SettingsStrategy(
@@ -250,7 +251,7 @@ class SettingsStrategy(
 }
 
 // ==============================================================================
-// STRATEGY 5: CONTACTS (Priorité 80)
+// STRATEGY 5: CONTACTS (Priority 80)
 // ==============================================================================
 
 class ContactStrategy : SearchStrategy {
