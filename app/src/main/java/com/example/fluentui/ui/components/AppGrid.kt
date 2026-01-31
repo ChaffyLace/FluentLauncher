@@ -1,12 +1,10 @@
 package com.example.fluentui.ui.components
 
-import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -19,10 +17,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,22 +39,18 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.fluentui.ui.utils.IconCache
 import com.example.fluentui.wallpaper.MicaParams
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.regular.Delete
-import fluent.ui.system.icons.regular.Pin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.Collator
@@ -66,6 +58,7 @@ import kotlin.math.roundToInt
 
 // Standard Windows 11 Icon Shape
 private val AppIconShape = RoundedCornerShape(12.dp)
+
 @Composable
 fun InternalAppIcon(
     packageName: String,
@@ -90,7 +83,6 @@ fun InternalAppIcon(
 
         if (badgeCount > 0) {
             val badgeText = if (badgeCount > 99) "99+" else badgeCount.toString()
-
             val textColor = if (badgeColor.luminance() > 0.5f) Color.Black else Color.White
 
             Box(
@@ -154,7 +146,12 @@ fun AppGrid(
     val isGridInDragMode = draggingPackage != null
 
     val allApps by remember(viewModel.otherApps.value, searchQuery, hiddenApps) {
-        derivedStateOf { viewModel.otherApps.value.filter { !hiddenApps.contains(it.packageName) && (searchQuery.isEmpty() || it.label.contains(searchQuery, true)) } }
+        derivedStateOf {
+            viewModel.otherApps.value.filter {
+                !hiddenApps.contains(it.packageName) &&
+                        (searchQuery.isEmpty() || it.label.contains(searchQuery, true))
+            }
+        }
     }
 
     if (isVertical) {
@@ -174,13 +171,22 @@ fun AppGrid(
                             app = app, iconSize = iconSize, fontSize = fontSize, showLabel = showLabels,
                             accentColor = accentColor, isDragging = false, isGridInDragMode = false,
                             micaParams = micaParams, onPinRequest = onPinRequest, onClose = onClose ?: {},
-                            onDragStart = {}, badgeCount = notifCounts[app.packageName] ?: 0
+                            onDragStart = {}, badgeCount = notifCounts[app.packageName] ?: 0,
+                            viewModel = viewModel
                         )
                     }
                 }
             }
             // Scrollbar Windows
-            WindowsStyleScrollbar(state, isDark, Modifier.align(Alignment.CenterEnd).padding(top = 60.dp, bottom = 120.dp, end = 4.dp).width(16.dp).fillMaxHeight())
+            WindowsStyleScrollbar(
+                state,
+                isDark,
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(top = 60.dp, bottom = 120.dp, end = 4.dp)
+                    .width(16.dp)
+                    .fillMaxHeight()
+            )
         }
     } else {
         val itemsPerPage = columnCount * rowCount
@@ -194,7 +200,10 @@ fun AppGrid(
                 visible = isGridInDragMode,
                 enter = slideInVertically { -it } + fadeIn(),
                 exit = slideOutVertically { -it } + fadeOut(),
-                modifier = Modifier.zIndex(100f).align(Alignment.TopCenter).padding(top = 48.dp)
+                modifier = Modifier
+                    .zIndex(100f)
+                    .align(Alignment.TopCenter)
+                    .padding(top = 48.dp)
             ) {
                 WindowsDeleteZone(isHoveringDelete, isDark)
             }
@@ -212,7 +221,9 @@ fun AppGrid(
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnCount),
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp),
                         verticalArrangement = Arrangement.SpaceEvenly,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         userScrollEnabled = false,
@@ -224,7 +235,10 @@ fun AppGrid(
 
                             Box(
                                 modifier = Modifier
+                                    // CORRECTION : animateItem remplace animateItemPlacement
                                     .animateItem(
+                                        fadeInSpec = null,
+                                        fadeOutSpec = null,
                                         placementSpec = spring(
                                             stiffness = Spring.StiffnessMediumLow,
                                             visibilityThreshold = IntOffset.VisibilityThreshold
@@ -247,6 +261,7 @@ fun AppGrid(
                                     onPinRequest = onPinRequest,
                                     onClose = onClose ?: {},
                                     badgeCount = notifCounts[app.packageName] ?: 0,
+                                    viewModel = viewModel,
 
                                     onDragStart = { iconAbsolutePos ->
                                         if (searchQuery.isEmpty()) {
@@ -264,7 +279,10 @@ fun AppGrid(
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             }
                                         } else {
-                                            val ghostCenter = ghostInitialPosition + draggingOffset + Offset((iconSize/2).dp.value, (iconSize/2).dp.value)
+                                            val ghostCenter = ghostInitialPosition + draggingOffset + Offset(
+                                                (iconSize / 2).dp.value,
+                                                (iconSize / 2).dp.value
+                                            )
                                             isHoveringDelete = ghostCenter.y < 350f
 
                                             if (!isHoveringDelete) {
@@ -332,6 +350,7 @@ private fun AppIconItem(
     onPinRequest: (AppModel) -> Unit,
     onClose: () -> Unit,
     badgeCount: Int = 0,
+    viewModel: AppViewModel,
     onDragStart: (Offset) -> Unit = {},
     onDrag: (Offset) -> Unit = {},
     onDragEnd: () -> Unit = {}
@@ -350,8 +369,13 @@ private fun AppIconItem(
     LaunchedEffect(isDragging) { if (isDragging) showMenu = false }
 
     val scale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "scale")
-    val targetAlpha = if (isGridInDragMode) { if (isDragging) 0f else 0.5f } else 1f
+    val targetAlpha = if (isGridInDragMode) {
+        if (isDragging) 0f else 0.5f
+    } else 1f
     val alpha by animateFloatAsState(targetAlpha, label = "dimming")
+
+    // RÉCUPÉRATION DE L'ÉTAT DE TRANSPARENCE
+    val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
 
     Box(
         modifier = Modifier
@@ -400,13 +424,12 @@ private fun AppIconItem(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
 
-            // --- MISE À JOUR ICI ---
             InternalAppIcon(
                 packageName = app.packageName,
                 size = iconSize,
                 modifier = Modifier.size(iconSize.dp),
                 badgeCount = badgeCount,
-                badgeColor = accentColor // <--- C'est ici que la magie opère
+                badgeColor = accentColor
             )
 
             if (showLabel) {
@@ -417,7 +440,9 @@ private fun AppIconItem(
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                     color = smartTextColor,
-                    modifier = Modifier.padding(top = 4.dp).width((iconSize + 24).dp)
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .width((iconSize + 24).dp)
                 )
             }
         }
@@ -430,12 +455,15 @@ private fun AppIconItem(
                 iconSize = iconSize,
                 onDismiss = { showMenu = false },
                 isDark = isSystemInDarkTheme(),
-                onPin = { onPinRequest(app); showMenu = false; onClose() }
+                onPin = { onPinRequest(app); showMenu = false; onClose() },
+                micaParams = micaParams,
+                isTransparencyEnabled = isTransparencyEnabled
+
             )
         }
     }
 }
-// --- SCROLLBAR ---
+
 @Composable
 private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifier: Modifier = Modifier) {
     BoxWithConstraints(modifier = modifier) {
@@ -445,11 +473,17 @@ private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifie
         var isActive by remember { mutableStateOf(false) }
 
         LaunchedEffect(state.isScrollInProgress, isDragging) {
-            if (state.isScrollInProgress || isDragging) isActive = true else { delay(1500); isActive = false }
+            if (state.isScrollInProgress || isDragging) isActive = true else {
+                delay(1500); isActive = false
+            }
         }
 
         val barAlpha by animateFloatAsState(if (isActive) 1f else 0f, tween(300), label = "alpha")
-        val barWidth by animateDpAsState(if (isDragging) 6.dp else 2.dp, spring(stiffness = Spring.StiffnessMediumLow), label = "width")
+        val barWidth by animateDpAsState(
+            if (isDragging) 6.dp else 2.dp,
+            spring(stiffness = Spring.StiffnessMediumLow),
+            label = "width"
+        )
 
         val scrollProgress by remember {
             derivedStateOf {
@@ -464,134 +498,179 @@ private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifie
             }
         }
 
-        val animProgress by animateFloatAsState(if (isDragging) scrollProgress else scrollProgress, if(isDragging) snap() else tween(50), label = "p")
+        val animProgress by animateFloatAsState(
+            if (isDragging) scrollProgress else scrollProgress,
+            if (isDragging) snap() else tween(50),
+            label = "p"
+        )
         val thumbH = 48.dp
-        val thumbY = animProgress * (maxHeight - with(LocalDensity.current){thumbH.toPx()})
+        val thumbY = animProgress * (maxHeight - with(LocalDensity.current) { thumbH.toPx() })
         val color = if (isDark) Color.White.copy(0.4f) else Color.Black.copy(0.4f)
         val actColor = if (isDark) Color.White.copy(0.8f) else Color.Black.copy(0.7f)
 
         if (barAlpha > 0.01f) {
-            Box(Modifier.fillMaxSize().alpha(barAlpha).pointerInput(maxHeight) {
-                detectVerticalDragGestures(
-                    onDragStart = { isDragging=true; isActive=true; scope.launch{state.scrollToItem(((it.y/maxHeight).coerceIn(0f,1f)*state.layoutInfo.totalItemsCount).toInt())} },
-                    onDragEnd = { isDragging=false }, onDragCancel = { isDragging=false },
-                    onVerticalDrag = { c, _ -> c.consume(); isActive=true; scope.launch{state.scrollToItem(((c.position.y/maxHeight).coerceIn(0f,1f)*state.layoutInfo.totalItemsCount).toInt())} }
+            Box(Modifier
+                .fillMaxSize()
+                .alpha(barAlpha)
+                .pointerInput(maxHeight) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            isDragging = true; isActive = true; scope.launch {
+                            state.scrollToItem(((it.y / maxHeight).coerceIn(0f, 1f) * state.layoutInfo.totalItemsCount).toInt())
+                        }
+                        },
+                        onDragEnd = { isDragging = false }, onDragCancel = { isDragging = false },
+                        onVerticalDrag = { c, _ ->
+                            c.consume(); isActive = true; scope.launch {
+                            state.scrollToItem(((c.position.y / maxHeight).coerceIn(0f, 1f) * state.layoutInfo.totalItemsCount).toInt())
+                        }
+                        }
+                    )
+                }) {
+                Box(
+                    Modifier
+                        .offset { IntOffset(0, thumbY.toInt()) }
+                        .align(Alignment.TopCenter)
+                        .width(barWidth)
+                        .height(thumbH)
+                        .background(if (isDragging) actColor else color, RoundedCornerShape(50))
                 )
-            }) {
-                Box(Modifier.offset{IntOffset(0, thumbY.toInt())}.align(Alignment.TopCenter).width(barWidth).height(thumbH).background(if(isDragging) actColor else color, RoundedCornerShape(50)))
             }
         }
     }
 }
 
-// --- MENUS & UTILS ---
-@SuppressLint("ConfigurationScreenWidthHeight")
-@Composable
-private fun FluentContextMenu(app: AppModel, iconPosition: Offset, iconHeight: Float, iconSize: Float, onDismiss: () -> Unit, isDark: Boolean, onPin: () -> Unit) {
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val screenHeight = context.resources.displayMetrics.heightPixels
-    val showBelow = (screenHeight - iconPosition.y - iconHeight) > with(density) { 180.dp.toPx() }
-    val vOffset = if (showBelow) with(density){ (iconSize+20).dp.roundToPx() } else with(density){ -160.dp.roundToPx() }
-
-    Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, vOffset), onDismissRequest = onDismiss, properties = PopupProperties(true, true)) {
-        Column(Modifier.width(200.dp).shadow(16.dp, RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).background(if(isDark) Color(0xFF2C2C2C).copy(0.95f) else Color(0xFFF9F9F9).copy(alpha = 0.95f)).border(1.dp, if(isDark) Color.White.copy(0.08f) else Color.Black.copy(0.06f), RoundedCornerShape(8.dp)).padding(4.dp)) {
-            MenuItem(FluentIcons.Regular.Pin, "Épingler à l'accueil", if(isDark) Color.White else Color.Black) { onPin() }
-            HorizontalDivider(Modifier.padding(4.dp), thickness = 1.dp, color = Color.Gray.copy(0.1f))
-            MenuItem(Icons.Default.Info, "Infos App", if(isDark) Color.White else Color.Black) { AppActions.openAppInfo(context, app.packageName); onDismiss() }
-            MenuItem(Icons.Default.Delete, "Désinstaller", if(isDark) Color.White else Color.Black) { AppActions.uninstallApp(context, app.packageName); onDismiss() }
-        }
-    }
-}
-
-@Composable
-private fun MenuItem(icon: ImageVector, text: String, color: Color, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(12.dp)); Text(text, color = color, fontSize = 13.sp)
-    }
-}
-
 @Composable
 private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHoveringDelete: Boolean) {
-    Box(modifier = Modifier.offset { IntOffset(currentPos.x.roundToInt(), currentPos.y.roundToInt()) }.zIndex(1001f).scale(if (isHoveringDelete) 0.8f else 1.05f)) {
-        InternalAppIcon(app.packageName, iconSize, Modifier.size(iconSize.dp).shadow(16.dp, AppIconShape))
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(currentPos.x.roundToInt(), currentPos.y.roundToInt()) }
+            .zIndex(1001f)
+            .scale(if (isHoveringDelete) 0.8f else 1.05f)
+    ) {
+        InternalAppIcon(
+            app.packageName,
+            iconSize,
+            Modifier
+                .size(iconSize.dp)
+                .shadow(16.dp, AppIconShape)
+        )
     }
 }
 
 @Composable
 private fun WindowsDeleteZone(isHovering: Boolean, isDark: Boolean) {
-    val bgColor = if (isHovering) Color(0xFFC42B1C) else (if(isDark) Color(0xFF2C2C2C) else Color(0xFFF3F3F3))
-    val contentColor = if (isHovering) Color.White else (if(isDark) Color.White else Color.Black)
+    val bgColor = if (isHovering) Color(0xFFC42B1C) else (if (isDark) Color(0xFF2C2C2C) else Color(0xFFF3F3F3))
+    val contentColor = if (isHovering) Color.White else (if (isDark) Color.White else Color.Black)
     val scale by animateFloatAsState(if (isHovering) 1.1f else 1f)
-    Row(Modifier.scale(scale).height(48.dp).width(160.dp).clip(RoundedCornerShape(8.dp)).background(bgColor).border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(8.dp)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-        Icon(FluentIcons.Regular.Delete, null, tint = contentColor, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text("Désinstaller", color = contentColor, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+    Row(
+        Modifier
+            .scale(scale)
+            .height(48.dp)
+            .width(160.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(8.dp)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(FluentIcons.Regular.Delete, null, tint = contentColor, modifier = Modifier.size(20.dp)); Spacer(
+        Modifier.width(10.dp)
+    ); Text(
+        "Désinstaller",
+        color = contentColor,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp
+    )
     }
 }
 
 @Composable
 private fun MicaSectionHeader(letter: Char, isDark: Boolean, micaParams: MicaParams) {
     val smartTextColor = micaParams.primaryColor
-    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(12.dp), verticalAlignment = Alignment.CenterVertically
+    ) {
         Box(contentAlignment = Alignment.Center) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(if (isDark) Color(0xFF202020).copy(0.3f) else Color.White.copy(0.4f)))
-            Text(letter.toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = smartTextColor)
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(if (isDark) Color(0xFF202020).copy(0.3f) else Color.White.copy(0.4f))
+            )
+            Text(
+                letter.toString(),
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = smartTextColor
+            )
         }
     }
 }
 
 @Composable
-private fun PagerIndicator(pageCount: Int, currentPage: Int, accentColor: Color, scope: kotlinx.coroutines.CoroutineScope, pagerState: androidx.compose.foundation.pager.PagerState) {
-    Row(Modifier.fillMaxWidth().height(40.dp).padding(bottom = 10.dp), horizontalArrangement = Arrangement.Center) {
+private fun PagerIndicator(
+    pageCount: Int,
+    currentPage: Int,
+    accentColor: Color,
+    scope: kotlinx.coroutines.CoroutineScope,
+    pagerState: androidx.compose.foundation.pager.PagerState
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .padding(bottom = 10.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
         repeat(pageCount) { i ->
             val color = if (currentPage == i) accentColor else Color.Gray.copy(0.5f)
             val size by animateDpAsState(if (currentPage == i) 8.dp else 6.dp, label = "d")
-            Box(Modifier.padding(3.dp).size(20.dp).clickable { scope.launch { pagerState.animateScrollToPage(i) } }, contentAlignment = Alignment.Center) {
-                Box(Modifier.size(size).clip(CircleShape).background(color))
+            Box(
+                Modifier
+                    .padding(3.dp)
+                    .size(20.dp)
+                    .clickable { scope.launch { pagerState.animateScrollToPage(i) } },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    Modifier
+                        .size(size)
+                        .clip(CircleShape)
+                        .background(color)
+                )
             }
         }
     }
-}
-
-class GridDragState {
-    var draggingPackage by mutableStateOf<String?>(null)
-    var ghostInitialPosition by mutableStateOf(Offset.Zero)
-    var draggingOffset by mutableStateOf(Offset.Zero)
-    var isHoveringDelete by mutableStateOf(false)
-    var lastSwapTime = 0L
-    val isDragging get() = draggingPackage != null
-    val currentPosition get() = ghostInitialPosition + draggingOffset
-    fun startDrag(pkg: String, pos: Offset) { ghostInitialPosition = pos; draggingOffset = Offset.Zero }
-    fun updateDrag(delta: Offset) { draggingOffset += delta; if (draggingPackage == null && draggingOffset.getDistance() > 30f) { /* Logic handled in view */ } }
-    fun markSwap() { lastSwapTime = System.currentTimeMillis() }
-    fun canSwap() = System.currentTimeMillis() - lastSwapTime > 200L
-    fun endDrag() { draggingPackage = null; draggingOffset = Offset.Zero; isHoveringDelete = false }
-    fun getGhostCenter(size: Float) = currentPosition + Offset((size/2).dp.value, (size/2).dp.value)
 }
 
 object AppLauncher {
     fun launch(ctx: Context, view: android.view.View?, pkg: String, pos: Offset, sizePx: Int) {
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg) ?: return
         try {
-            // Note: sizePx est maintenant un Int, plus d'erreur de type
-            val opts = if (view != null) ActivityOptions.makeScaleUpAnimation(view, pos.x.toInt(), pos.y.toInt(), sizePx, sizePx).toBundle() else null
+            val opts = if (view != null) ActivityOptions.makeScaleUpAnimation(
+                view,
+                pos.x.toInt(),
+                pos.y.toInt(),
+                sizePx,
+                sizePx
+            ).toBundle() else null
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent, opts)
-        } catch (e: Exception) { ctx.startActivity(intent) }
+        } catch (e: Exception) {
+            ctx.startActivity(intent)
+        }
     }
 }
-
-object AppActions {
-    fun openAppInfo(ctx: Context, pkg: String) {
-        try { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:$pkg"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch(e:Exception){}
-    }
-    fun uninstallApp(ctx: Context, pkg: String) {
-        try { ctx.startActivity(Intent(Intent.ACTION_DELETE).apply { data = Uri.parse("package:$pkg"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }) } catch(e:Exception){ openAppInfo(ctx, pkg) }
-    }
-}
-
 object AppGrouper {
     fun groupByAlphabet(apps: List<AppModel>): Map<Char, List<AppModel>> {
         val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }
-        return apps.distinctBy { it.packageName }.sortedWith { a, b -> collator.compare(a.label, b.label) }.groupBy { it.label.firstOrNull()?.uppercaseChar()?.takeIf { c -> c.isLetter() } ?: '#' }
+        return apps.distinctBy { it.packageName }
+            .sortedWith { a, b -> collator.compare(a.label, b.label) }
+            .groupBy {
+                it.label.firstOrNull()?.uppercaseChar()?.takeIf { c -> c.isLetter() } ?: '#'
+            }
     }
 }

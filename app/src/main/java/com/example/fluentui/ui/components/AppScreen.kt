@@ -1,7 +1,10 @@
 package com.example.fluentui.ui.components
 
 import android.app.Application
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -41,13 +44,21 @@ import kotlin.math.absoluteValue
 @Composable
 fun AppScreen(
     viewModel: AppViewModel = viewModel(),
-    settingsViewModel: SettingsViewModel = viewModel(),
-    onOpenGallery: () -> Unit
+    settingsViewModel: SettingsViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isDark = isSystemInDarkTheme()
     val settingsManager = remember { SettingsManager(context) }
+
+    // --- LE LANCEUR DE GALERIE ---
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.setCustomWallpaper(uri)
+        }
+    }
 
     // --- Settings Collection ---
     val wpType by settingsManager.wallpaperType.collectAsState("SOLID")
@@ -80,16 +91,13 @@ fun AppScreen(
 
     SystemBarController(isDark)
 
-    // Pager : 0 = Dashboard, 1 = Apps List
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
 
-    // --- NAVIGATION LISTENER (Home Button) ---
     LaunchedEffect(Unit) {
         viewModel.navigationEvent.collect { event ->
             when (event) {
                 is NavigationEvent.ScrollToHome -> {
                     if (pagerState.currentPage != 0) {
-                        // Retour ultra-rapide au dashboard
                         pagerState.animateScrollToPage(0, 0f, spring(stiffness = Spring.StiffnessMedium))
                     }
                 }
@@ -127,51 +135,36 @@ fun AppScreen(
         }
     }
 
-    // Wallpaper Animation
     val rawProgress by remember { derivedStateOf { if (isSearchVisible) 1f else (pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f) } }
     val motionProgress by animateFloatAsState(targetValue = rawProgress, animationSpec = FluentMotion.pageScrollSpec(), label = "MotionProgress")
     val contentAlpha by animateFloatAsState(if (isSearchVisible) 0f else 1f, FluentMotion.enterSpec(FluentMotion.DurationFast), label = "alpha")
 
     Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { if (isSearchVisible) closeSearch() } }) {
 
-        // 1. Wallpaper Layer
-        WallpaperLayer(settings = settingsState, isDark = isDark, scrollProgress = motionProgress)
+        WallpaperLayer(settings = settingsState, isDark = isDark, scrollProgress = motionProgress,)
 
-        // 2. Content (Dashboard + App List)
         Box(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha }) {
             VerticalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
                 pageSpacing = 0.dp,
-                // --- TUNING PHYSIQUE AGRESSIF (PRO) ---
                 flingBehavior = PagerDefaults.flingBehavior(
                     state = pagerState,
-                    // 1. Seuil critique à 5% : Le moindre mouvement valide le changement
                     snapPositionalThreshold = 0.05f,
-
-                    // 2. Ressort tendu (StiffnessHigh) : Ça claque immédiatement, pas de flottement
-                    snapAnimationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessHigh
-                    )
+                    snapAnimationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
                 )
             ) { page ->
                 Box(modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        // --- TRANSITION WINDOWS 11 ---
                         val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
-
                         if (page == 0) {
-                            // Le Dashboard monte un peu moins vite (Parallaxe 0.3) et s'efface vite
                             translationY = pageOffset * size.height * 0.3f
                             val scale = 1f - (pageOffset.absoluteValue * 0.05f)
                             scaleX = scale
                             scaleY = scale
-                            // Fade Out agressif pour ne pas voir le dashboard en transparence trop longtemps
                             alpha = (1f - pageOffset.absoluteValue * 3f).coerceIn(0f, 1f)
                         }
-                        // Page 1 (AppGrid) reste normale (elle passe par dessus grâce au Z-order)
                     }
                 ) {
                     when (page) {
@@ -182,7 +175,6 @@ fun AppScreen(
             }
         }
 
-        // 3. Search Overlay
         FluentReveal(visible = isSearchVisible, modifier = Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().background(if (isDark) Color.Black.copy(0.6f) else Color.White.copy(0.6f)).statusBarsPadding().clickable(null, null) { closeSearch() }) {
                 if (searchState.query.isEmpty()) SearchDashboard(allApps, { context.packageManager.getLaunchIntentForPackage(it)?.let { i -> context.startActivity(i); closeSearch() } }, isDark)
@@ -190,14 +182,22 @@ fun AppScreen(
             }
         }
 
-        // 4. Search Pill
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp).imePadding()) {
             FluentSearchPill(searchState.query, { searchViewModel.onQueryChange(it); if (!isSearchActive && it.isNotEmpty()) isSearchActive = true }, { showSettings = true }, { if (it) isSearchActive = true }, isDark)
         }
 
-        // 5. Settings Overlay
+        // --- CORRECTION DES PARAMÈTRES ICI ---
         if (showSettings) {
-            SettingsOverlay(showSettings, micaParams, allApps, { showSettings = false }, settingsViewModel, onOpenGallery)
+            SettingsOverlay(
+                isVisible = showSettings,              // Correction : 'show' -> 'isVisible'
+                micaParams = micaParams,
+                allApps = allApps,
+                onDismiss = { showSettings = false },  // Correction : 'onClose' -> 'onDismiss'
+                viewModel = settingsViewModel,
+                onWallpaperChangeClick = {             // Correction : 'onOpenGallery' -> 'onWallpaperChangeClick'
+                    galleryLauncher.launch("image/*")
+                }
+            )
         }
     }
 }

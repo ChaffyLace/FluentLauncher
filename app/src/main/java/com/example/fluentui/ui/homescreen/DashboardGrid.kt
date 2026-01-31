@@ -14,18 +14,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -35,6 +33,7 @@ import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.wallpaper.MicaParams
 import kotlin.math.roundToInt
 
+// CONFIGURATION
 private const val COLUMN_COUNT = 6
 private val GAP_SIZE = 8.dp
 
@@ -50,19 +49,21 @@ fun DashboardGrid(
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
 
+    // 1. RÉCUPÉRATION DU PARAMÈTRE MANQUANT
+    // Nécessaire pour MicaTile
+    val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
+
     // État du Drag
     var draggingTileId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    var initialDragPosition by remember { mutableStateOf(Offset.Zero) } // Position absolue départ
-    var draggingTileSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+    var startGridOffset by remember { mutableStateOf(IntOffset.Zero) }
+
+    var draggingItemSize by remember { mutableStateOf(IntSize.Zero) }
 
     var menuTileId by remember { mutableStateOf<String?>(null) }
 
-    // --- CARTE DES POSITIONS (LA CLÉ DE LA RÉUSSITE) ---
-    // On stocke la zone exacte de chaque tuile sur l'écran
-    val itemBounds = remember { mutableMapOf<String, Rect>() }
+    val lazyGridState = rememberLazyGridState()
 
-    // Liste locale pour réactivité immédiate
     var currentTiles by remember { mutableStateOf(tiles) }
     LaunchedEffect(tiles) {
         if (draggingTileId == null) currentTiles = tiles
@@ -76,8 +77,10 @@ fun DashboardGrid(
 
         Box(modifier = Modifier.fillMaxSize()) {
 
+            // 1. GRILLE PRINCIPALE
             LazyVerticalGrid(
                 columns = GridCells.Fixed(COLUMN_COUNT),
+                state = lazyGridState,
                 contentPadding = PaddingValues(top = 60.dp, bottom = 100.dp, start = 12.dp, end = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(GAP_SIZE),
                 horizontalArrangement = Arrangement.spacedBy(GAP_SIZE),
@@ -90,68 +93,65 @@ fun DashboardGrid(
                         val colSpan = when (tile.size) {
                             TileSize.TINY -> 1
                             TileSize.SMALL -> 2
-                            TileSize.MEDIUM -> 4
+                            TileSize.MEDIUM -> 4 // Assure-toi que MEDIUM existe dans ton enum TileSize
                             TileSize.LARGE -> 4
+                            else -> 2 // Fallback
                         }
                         GridItemSpan(colSpan)
                     }
                 ) { index, tile ->
 
                     val isDragging = tile.id == draggingTileId
+                    val alpha by animateFloatAsState(if (isDragging) 0f else 1f, label = "alpha")
                     val tileHeight = calculateTileHeight(tile.size, unitWidth)
 
                     Box(
                         modifier = Modifier
                             .height(tileHeight)
-                            .onGloballyPositioned { coords ->
-                                // ON ENREGISTRE LA POSITION EN TEMPS RÉEL
-                                if (coords.isAttached) {
-                                    itemBounds[tile.id] = coords.boundsInWindow()
-                                }
-                            }
-                            .alpha(if (isDragging) 0f else 1f) // L'original disparaît
+                            .graphicsLayer { this.alpha = alpha }
+                            .zIndex(if (isDragging) 100f else 0f)
                             .pointerInput(tile.id) {
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        draggingTileId = tile.id
 
-                                        // On capture d'où on part (absolu)
-                                        val bounds = itemBounds[tile.id] ?: Rect.Zero
-                                        initialDragPosition = bounds.topLeft
-                                        draggingTileSize = bounds.size
-
-                                        dragOffset = Offset.Zero
-                                        menuTileId = null
+                                        val itemInfo = lazyGridState.layoutInfo.visibleItemsInfo.find { it.key == tile.id }
+                                        if (itemInfo != null) {
+                                            startGridOffset = itemInfo.offset
+                                            draggingItemSize = itemInfo.size
+                                            draggingTileId = tile.id
+                                            dragOffset = Offset.Zero
+                                            menuTileId = null
+                                        }
                                     },
                                     onDrag = { change, dragAmount ->
                                         change.consume()
                                         dragOffset += dragAmount
                                     },
                                     onDragEnd = {
-                                        // Clic ou Déplacement ?
                                         if (dragOffset.getDistance() < 10f) {
                                             menuTileId = tile.id
                                         } else {
-                                            // --- DÉTECTION DU LÂCHER (DROP) ---
+                                            // --- DÉTECTION ---
+                                            val centerX = startGridOffset.x + dragOffset.x + (draggingItemSize.width / 2)
+                                            val centerY = startGridOffset.y + dragOffset.y + (draggingItemSize.height / 2)
 
-                                            // 1. Où est le doigt (le centre de la tuile déplacée) ?
-                                            val dropCenterX = initialDragPosition.x + dragOffset.x + (draggingTileSize.width / 2)
-                                            val dropCenterY = initialDragPosition.y + dragOffset.y + (draggingTileSize.height / 2)
-                                            val dropPoint = Offset(dropCenterX, dropCenterY)
+                                            val targetItem = lazyGridState.layoutInfo.visibleItemsInfo.find { item ->
+                                                val x = item.offset.x
+                                                val y = item.offset.y
+                                                val w = item.size.width
+                                                val h = item.size.height
 
-                                            // 2. Qui est dessous ?
-                                            val targetId = itemBounds.entries.find { (id, rect) ->
-                                                id != tile.id && rect.contains(dropPoint)
-                                            }?.key
+                                                centerX > x && centerX < x + w &&
+                                                        centerY > y && centerY < y + h
+                                            }
 
-                                            // 3. Exécution de l'échange
-                                            if (targetId != null) {
-                                                val fromIndex = currentTiles.indexOfFirst { it.id == tile.id }
-                                                val toIndex = currentTiles.indexOfFirst { it.id == targetId }
+                                            if (targetItem != null && targetItem.key != tile.id) {
+                                                val fromIdx = currentTiles.indexOfFirst { it.id == tile.id }
+                                                val toIdx = currentTiles.indexOfFirst { it.id == targetItem.key }
 
-                                                if (fromIndex != -1 && toIndex != -1) {
-                                                    viewModel.moveTile(fromIndex, toIndex)
+                                                if (fromIdx != -1 && toIdx != -1) {
+                                                    viewModel.moveTile(fromIdx, toIdx)
                                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                 }
                                             }
@@ -166,43 +166,53 @@ fun DashboardGrid(
                                 )
                             }
                     ) {
+                        // CORRECTION 1 : Ajout du paramètre isTransparencyEnabled
                         MicaTile(
                             config = tile,
                             mica = micaParams,
                             isDark = isDark,
                             viewModel = viewModel,
                             modifier = Modifier.fillMaxSize(),
-                            onClick = { if (menuTileId == null) onTileClick(tile) }
+                            onClick = { if (menuTileId == null) onTileClick(tile) },
+                            isTransparencyEnabled = isTransparencyEnabled
                         )
                     }
                 }
             }
 
-            // --- FANTÔME (VISUEL) ---
+            // 2. FANTÔME (VISUEL)
             if (draggingTileId != null) {
                 val tile = currentTiles.find { it.id == draggingTileId }
                 if (tile != null) {
                     val w = calculateWidth(tile.size, unitWidth)
                     val h = calculateTileHeight(tile.size, unitWidth)
 
-                    // Position Absolue sur l'écran
-                    val currentX = initialDragPosition.x + dragOffset.x
-                    val currentY = initialDragPosition.y + dragOffset.y
+                    val finalX = startGridOffset.x + dragOffset.x + with(density) { 12.dp.toPx() }
+                    val finalY = startGridOffset.y + dragOffset.y + with(density) { 60.dp.toPx() }
 
                     Box(
                         modifier = Modifier
-                            .offset { IntOffset(currentX.roundToInt(), currentY.roundToInt()) }
+                            .offset { IntOffset(finalX.roundToInt(), finalY.roundToInt()) }
                             .size(w, h)
                             .zIndex(1000f)
                             .scale(1.05f)
                             .alpha(0.9f)
                     ) {
-                        MicaTile(tile, micaParams, isDark, viewModel, Modifier.fillMaxSize(), {})
+                        // CORRECTION 2 : Ajout du paramètre isTransparencyEnabled ici aussi
+                        MicaTile(
+                            config = tile,
+                            mica = micaParams,
+                            isDark = isDark,
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxSize(),
+                            isTransparencyEnabled = isTransparencyEnabled,
+                            onClick = {}
+                        )
                     }
                 }
             }
 
-            // --- MENU ---
+            // 3. MENU
             if (menuTileId != null) {
                 val tile = tiles.find { it.id == menuTileId }
                 if (tile != null) {
@@ -220,6 +230,7 @@ private fun calculateTileHeight(size: TileSize, unit: Dp): Dp {
         TileSize.SMALL -> (unit * 2) + GAP_SIZE
         TileSize.MEDIUM -> (unit * 2) + GAP_SIZE
         TileSize.LARGE -> (unit * 4) + (GAP_SIZE * 3)
+        else -> unit * 2 // Fallback
     }
 }
 
@@ -227,8 +238,9 @@ private fun calculateWidth(size: TileSize, unit: Dp): Dp {
     return when(size) {
         TileSize.TINY -> unit
         TileSize.SMALL -> (unit * 2) + GAP_SIZE
-        TileSize.MEDIUM -> (unit * 4) + (GAP_SIZE * 3)
+        TileSize.MEDIUM -> (unit * 2) + GAP_SIZE
         TileSize.LARGE -> (unit * 4) + (GAP_SIZE * 3)
+        else -> unit * 2 // Fallback
     }
 }
 

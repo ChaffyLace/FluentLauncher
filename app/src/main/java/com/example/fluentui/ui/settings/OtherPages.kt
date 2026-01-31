@@ -47,7 +47,9 @@ import fluent.ui.system.icons.regular.Sparkle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-// --- HOME PAGE ---
+// =================================================================================
+// HOME PAGE
+// =================================================================================
 @Composable
 fun HomePage(
     state: SettingsState,
@@ -129,12 +131,14 @@ fun HomePage(
     }
 }
 
-// --- COLOR PAGE ---
+// =================================================================================
+// COLOR PAGE (AVEC LE SWITCH MICA)
+// =================================================================================
 @Composable
 fun ColorPage(
     state: SettingsState,
     onSetAccent: (Color) -> Unit,
-    onSetTransparency: (Boolean) -> Unit
+    onSetTransparency: (Boolean) -> Unit // <--- Le callback vital
 ) {
     val isDark = isSystemInDarkTheme()
     val titleColor = if (isDark) Color.White else Color(0xFF191919)
@@ -162,7 +166,13 @@ fun ColorPage(
                     Text("Effets de transparence", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Text("Effet Mica matériel", color = subTextColor, fontSize = 12.sp)
                 }
-                WindowsSwitch(checked = state.transparencyEnabled, onCheckedChange = onSetTransparency, enabled = true, accentColor = state.accentColor)
+                // SWITCH CONNECTÉ AU CALLBACK
+                WindowsSwitch(
+                    checked = state.transparencyEnabled,
+                    onCheckedChange = onSetTransparency,
+                    enabled = true,
+                    accentColor = state.accentColor
+                )
             }
         }
 
@@ -186,7 +196,9 @@ fun ColorPage(
     }
 }
 
-// --- BACKGROUND PAGE (OPTIMISÉE) ---
+// =================================================================================
+// BACKGROUND PAGE
+// =================================================================================
 @Composable
 fun BackgroundPage(
     state: SettingsState,
@@ -242,8 +254,6 @@ fun BackgroundPage(
     }
 
     fun applyColorToSystem(color: Int) {
-        // Android ne supporte pas nativement les couleurs unies,
-        // mais on peut générer un petit bitmap de cette couleur.
         scope.launch(Dispatchers.IO) {
             try {
                 val bitmap = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
@@ -363,7 +373,9 @@ fun BackgroundPage(
     }
 }
 
-// --- LAYOUT PAGE ---
+// =================================================================================
+// LAYOUT PAGE
+// =================================================================================
 @Composable
 fun LayoutPage(
     state: SettingsState,
@@ -458,7 +470,9 @@ fun LayoutPage(
     }
 }
 
-// --- HIDDEN APPS DIALOG (CORRIGÉ) ---
+// =================================================================================
+// HIDDEN APPS DIALOG
+// =================================================================================
 @Composable
 fun HiddenAppsDialog(allApps: List<AppModel>, hiddenApps: Set<String>, accentColor: Color, onDismiss: () -> Unit, onToggleApp: (String, Boolean) -> Unit) {
     val isDark = isSystemInDarkTheme()

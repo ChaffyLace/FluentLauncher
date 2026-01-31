@@ -16,14 +16,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,12 +31,8 @@ import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.ui.system.TileType
 import com.example.fluentui.wallpaper.MicaParams
-import com.example.fluentui.wallpaper.NoiseGenerator
+import com.example.fluentui.wallpaper.fluentMicaComplex // <--- L'IMPORT ESSENTIEL
 
-/**
- * Fluent Design Mica Tile
- * Implements the authentic Windows 11 material feel with specular borders and dynamic tinting.
- */
 @Composable
 fun MicaTile(
     config: TileConfig,
@@ -49,80 +40,40 @@ fun MicaTile(
     isDark: Boolean,
     viewModel: AppViewModel,
     modifier: Modifier = Modifier,
+    isTransparencyEnabled: Boolean,
     onClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
-    // --- GEOMETRY ---
-    // Tiny tiles are sharper, larger tiles are softer
     val cornerRadius = if (config.size == TileSize.TINY) 8.dp else 12.dp
     val tileShape = RoundedCornerShape(cornerRadius)
 
-    // --- ANIMATION ---
+    // Animation de pression (Scale)
     var isPressed by remember { mutableStateOf(false) }
-    // Micro-interaction: Spring effect on press
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.96f else 1f,
         label = "press_scale",
         animationSpec = tween(100)
     )
 
-    // --- LOGIC ---
     val isRichMedia = isRichMediaApp(config.packageName)
-    // Only System apps get the Mica effect. Media apps get their brand color.
+
+    // Pour les Apps système standard, on peut ajouter une petite bordure spéculaire en plus du Mica
     val isSystemApp = config.type == TileType.APPLICATION && !isRichMedia
 
-    // --- MICA RECIPE (The "Secret Sauce") ---
-
-    // 1. Base Tint: Pulls color from wallpaper or falls back to system theme
-    val baseColor = remember(mica, isDark) {
-        mica?.surfaceColor ?: if (isDark) Color(0xFF202020) else Color(0xFFF3F3F3)
-    }
-
-    // 2. Acrylic Surface Brush (The "Glassy" look)
-    // We use a subtle gradient to simulate light hitting the surface from top-left
-    val surfaceBrush = remember(baseColor, isDark) {
-        val startAlpha = if (isDark) 0.60f else 0.70f // More opaque at top
-        val endAlpha = if (isDark) 0.30f else 0.45f   // More transparent at bottom
-
-        Brush.linearGradient(
-            colors = listOf(
-                baseColor.copy(alpha = startAlpha),
-                baseColor.copy(alpha = endAlpha)
-            ),
-            start = Offset(0f, 0f),
-            end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
-        )
-    }
-
-    // 3. Specular Border (The "Light Edge")
-    // Windows controls have a border that is brighter on top (light source) and darker on bottom (shadow)
-    val borderBrush = remember(isDark) {
-        Brush.verticalGradient(
-            colors = listOf(
-                if (isDark) Color.White.copy(0.12f) else Color.White.copy(0.8f), // Top Highlight
-                if (isDark) Color.White.copy(0.02f) else Color.Black.copy(0.05f) // Bottom Shadow
-            )
-        )
-    }
-
-    // 4. Noise Texture (To avoid the "plastic" look)
-    val noiseBrush = remember(isDark) {
-        try { NoiseGenerator.generate(isDark) } catch (e: Exception) { null }
-    }
-
-    // --- RENDER ---
     Box(
         modifier = modifier
             .scale(scale)
-            // Soft shadow for depth (Elevated from background)
-            .shadow(
-                elevation = if (isDark) 6.dp else 4.dp,
-                shape = tileShape,
-                spotColor = Color.Black.copy(if (isDark) 0.4f else 0.15f),
-                ambientColor = Color.Black.copy(if (isDark) 0.2f else 0.05f)
+            // --- C'EST ICI LE CHANGEMENT MAJEUR ---
+            // Au lieu de calculer des Brush compliqués, on appelle ton moteur graphique.
+            // Il gère : L'ombre, le Clip, le Fond Gris (si désactivé) OU le Fond Flou (si activé).
+            .fluentMicaComplex(
+                micaParams = mica,
+                enabled = isTransparencyEnabled,
+                elevation = if (isDark) 6.dp else 4.dp, // L'ombre est gérée dedans
+                shape = tileShape
             )
-            .clip(tileShape)
+            // Gestion du clic
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = { isPressed = true; tryAwaitRelease(); isPressed = false },
@@ -137,31 +88,19 @@ fun MicaTile(
                 )
             }
     ) {
-        // LAYER 1: MATERIAL BACKGROUND
-        if (isSystemApp) {
-            // A. Glass Body
-            Box(Modifier.matchParentSize().background(surfaceBrush))
-
-            // B. Noise Texture Overlay
-            if (noiseBrush != null) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .graphicsLayer(alpha = if (isDark) 0.04f else 0.08f)
-                        .background(noiseBrush)
+        // LAYER 1: FINITIONS SUPPLÉMENTAIRES (Optionnel)
+        if (isSystemApp && isTransparencyEnabled) {
+            // Petite bordure "lumière" en haut (Specular) pour faire encore plus 3D
+            val borderBrush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.White.copy(if (isDark) 0.15f else 0.4f),
+                    Color.Transparent
                 )
-            }
-
-            // C. Specular Border stroke (Inside)
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .border(1.dp, borderBrush, tileShape)
             )
+            Box(Modifier.matchParentSize().border(1.dp, borderBrush, tileShape))
         }
 
-        // LAYER 2: CONTENT
-        // Content gets padding, background does not.
+        // LAYER 2: LE CONTENU DE LA TUILE
         Box(modifier = Modifier.fillMaxSize()) {
             when (config.type) {
                 TileType.CALENDAR -> CalendarWidget(config)
@@ -175,14 +114,12 @@ fun MicaTile(
                     } else {
                         // STANDARD APP CONTENT
                         Box(Modifier.fillMaxSize().padding(12.dp)) {
-                            // Responsive Icon Size
                             val iconSize = when (config.size) {
                                 TileSize.TINY -> 28.dp
                                 TileSize.SMALL -> 36.dp
                                 else -> 52.dp
                             }
 
-                            // Center Alignment
                             SharedAppIcon(
                                 packageName = config.packageName,
                                 size = when (config.size) {
@@ -191,7 +128,6 @@ fun MicaTile(
                                 modifier = Modifier.size(iconSize).align(Alignment.Center)
                             )
 
-                            // Label (Hidden on Tiny tiles for cleaner look)
                             if (config.size != TileSize.TINY) {
                                 Text(
                                     text = config.title,
@@ -211,9 +147,7 @@ fun MicaTile(
     }
 }
 
-// =================================================================================
-// --- HELPER COMPONENTS (Required for compilation) ---
-// =================================================================================
+// --- LES FONCTIONS UTILITAIRES ET WIDGETS ---
 
 @Composable
 fun SharedAppIcon(packageName: String, size: Float, modifier: Modifier) {
@@ -230,6 +164,8 @@ fun isRichMediaApp(packageName: String): Boolean {
 @Composable
 fun RichMediaTileContent(config: TileConfig) {
     val pkg = config.packageName.lowercase()
+    // Note: Pour les apps média, on garde souvent leur couleur de marque opaque
+    // car ça fait partie de leur identité, mais tu peux enlever le .background() si tu veux du Mica ici aussi.
     Box(Modifier.fillMaxSize()) {
         when {
             pkg.contains("netflix") -> {
@@ -238,7 +174,6 @@ fun RichMediaTileContent(config: TileConfig) {
             }
             pkg.contains("spotify") -> {
                 Box(Modifier.fillMaxSize().background(Color(0xFF1DB954)))
-                // Fake logo
                 Box(Modifier.size(32.dp).background(Color.Black, CircleShape).align(Alignment.Center))
             }
             pkg.contains("youtube") -> {
@@ -253,10 +188,12 @@ fun RichMediaTileContent(config: TileConfig) {
     }
 }
 
-// --- WIDGET IMPLEMENTATIONS (Visual Mocks for MVP) ---
+// --- WIDGETS ---
+// J'ai retiré les fonds opaques des widgets pour qu'on voit le Mica derrière !
 
 @Composable
 fun CalendarWidget(config: TileConfig) {
+    // On passe transparent = true pour profiter du Mica de la tuile
     FluentWidgetLayout(isDark = isSystemInDarkTheme()) {
         Icon(Icons.Default.DateRange, null, tint = Color(0xFF60CDFF), modifier = Modifier.size(22.dp))
         Spacer(Modifier.height(8.dp))
@@ -301,8 +238,7 @@ fun BatteryWidget(config: TileConfig) {
 
 @Composable
 fun WeatherWidget(config: TileConfig) {
-    val isDark = isSystemInDarkTheme()
-    // Gradient background for weather specifically
+    // La météo garde son dégradé spécifique car c'est joli, mais tu peux le retirer pour du Mica pur
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF2F80ED), Color(0xFF56CCF2))))) {
         Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Icon(Icons.Default.Star, null, tint = Color.White, modifier = Modifier.size(24.dp))
@@ -312,12 +248,11 @@ fun WeatherWidget(config: TileConfig) {
     }
 }
 
-// --- SHARED WIDGET LAYOUT ---
 @Composable
 fun FluentWidgetLayout(isDark: Boolean, content: @Composable ColumnScope.(Color) -> Unit) {
     val textColor = if (isDark) Color.White else Color.Black
-    // Subtle background for widget readability vs Mica
-    val bg = if (isDark) Color.White.copy(0.03f) else Color.Black.copy(0.03f)
+    // J'ai mis le fond à Transparent pour que le layout ne cache pas l'effet Mica de la tuile
+    val bg = Color.Transparent
 
     Column(
         modifier = Modifier
@@ -329,9 +264,4 @@ fun FluentWidgetLayout(isDark: Boolean, content: @Composable ColumnScope.(Color)
     ) {
         content(textColor)
     }
-}
-
-// Fallback for Noise
-object NoiseGenerator {
-    fun generate(isDark: Boolean): Brush? = null
 }

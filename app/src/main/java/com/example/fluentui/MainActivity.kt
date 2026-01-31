@@ -19,6 +19,7 @@ import androidx.core.view.WindowCompat
 import com.example.fluentui.ui.components.AppScreen
 import com.example.fluentui.ui.components.AppViewModel
 import com.example.fluentui.ui.theme.FluentUITheme
+import com.example.fluentui.ui.utils.IconCache
 
 class MainActivity : ComponentActivity() {
 
@@ -45,12 +46,20 @@ class MainActivity : ComponentActivity() {
 
                 AppScreen(
                     viewModel = viewModel,
-                    onOpenGallery = { wallpaperLauncher.launch("image/*") }
                 )
             }
         }
     }
 
+    // Dans MainActivity.kt
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+
+        if (level >= TRIM_MEMORY_MODERATE) {
+            IconCache.clear()
+        }
+    }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.hasCategory(Intent.CATEGORY_HOME) || intent.action == Intent.ACTION_MAIN) {

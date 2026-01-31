@@ -77,26 +77,16 @@ class SettingsManager(private val context: Context) {
         context.dataStore.edit { it[SAVED_CITY] = city }
     }
 
-    // ========================================================================
-    // --- AJOUTS NÉCESSAIRES POUR CORRIGER LES ERREURS DE COMPILATION ---
-    // ========================================================================
-
-    // Requis par SettingsViewModel (alias vers setTransparencyEnabled)
     suspend fun setTransparency(enabled: Boolean) {
         setTransparencyEnabled(enabled)
     }
-
-    // Requis par SettingsViewModel pour sauvegarder toute la liste d'un coup
     suspend fun setHiddenApps(apps: Set<String>) {
         context.dataStore.edit { it[HIDDEN_APPS] = apps }
     }
 
-    // Requis par AppViewModel pour sauvegarder le type individuellement
     suspend fun setWallpaperType(type: String) {
         context.dataStore.edit { it[WALLPAPER_TYPE] = type }
     }
-
-    // Requis par AppViewModel pour sauvegarder la valeur (URI) individuellement
     suspend fun setWallpaperValue(value: String) {
         context.dataStore.edit { it[WALLPAPER_VALUE] = value }
     }

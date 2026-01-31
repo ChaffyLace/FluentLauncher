@@ -13,10 +13,12 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.util.Log // Import pour les Logs
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.palette.graphics.Palette
@@ -35,7 +37,6 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
-import java.io.File
 import java.util.*
 
 sealed class NavigationEvent {
@@ -50,24 +51,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val dashboardPrefs = context.getSharedPreferences("fluent_dashboard_final", Context.MODE_PRIVATE)
     private val gson = Gson()
 
-    // --- STATE ---
+    private var micaCalculationJob: Job? = null
+
     val notificationCounts = NotificationRepo.counts
     val otherApps = mutableStateOf<List<AppModel>>(emptyList())
-    // Liste simple : L'ordre dans la liste détermine la position à l'écran
     val dashboardTiles = mutableStateListOf<TileConfig>()
 
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     val navigationEvent = _navigationEvent.receiveAsFlow()
 
-    // --- MICA PARAMS (Fix Argument Mismatch) ---
     private val defaultMica = MicaParams(
-        surfaceColor = Color(0xFFFFFFFF),
-        primaryColor = Color(0xFF000000),
+        surfaceColor = Color(0xFF202020),
+        surfaceAlpha = 0.6f,
         tintBrush = Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent)),
-        tintAlpha = 0.0f,
+        tintAlpha = 0f,
+        primaryColor = Color.White,
         noiseBrush = null,
-        noiseAlpha = 0.0f,
-        surfaceAlpha = 0.5f
+        dominantColor = Color(0xFF0078D4),
+        noiseAlpha = 0f,
+        contentColor = Color.White,
+        blurredWallpaperBitmap = null,
+        isDark = true
     )
 
     private val _micaParams = MutableStateFlow(defaultMica)
@@ -81,14 +85,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val saveDebouncer = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
 
-    // --- RECEIVERS ---
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) { viewModelScope.launch { loadInstalledApps() } }
     }
+
     private val themeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(ctx: Context?, intent: Intent?) {
-            viewModelScope.launch { calculateMicaFromWallpaper(settingsManager.wallpaperType.first(), settingsManager.wallpaperValue.first()) }
-        }
+        override fun onReceive(ctx: Context?, intent: Intent?) { refreshWallpaperVisuals() }
     }
 
     init {
@@ -100,13 +102,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 addDataScheme("package")
             }
             context.registerReceiver(packageReceiver, f)
-            context.registerReceiver(themeReceiver, IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED))
+
+            val themeFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_CONFIGURATION_CHANGED)
+                addAction(Intent.ACTION_WALLPAPER_CHANGED)
+            }
+            context.registerReceiver(themeReceiver, themeFilter)
         }
 
         viewModelScope.launch {
             loadInstalledApps()
             loadTilesFromStorage()
-            observeWallpaperSettings()
+            refreshWallpaperVisuals()
         }
         setupAutoSave()
     }
@@ -118,78 +125,151 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onHomePressed() { viewModelScope.launch { _navigationEvent.send(NavigationEvent.ScrollToHome) } }
 
-    // =================================================================================
-    // GESTION SIMPLE ET ROBUSTE (Style LazyGrid)
-    // =================================================================================
+    private suspend fun updateMicaFromBitmap(originalBitmap: Bitmap) = withContext(Dispatchers.Default) {
+        try {
+            // 1. FLOU OPTIMISÉ (Reste inchangé, ça marche bien)
+            val blurResult = com.example.fluentui.ui.utils.BitmapHelper.createBlur(originalBitmap, radius = 25)
+            val finalBitmap = if (blurResult.isSuccess) blurResult.getOrNull() else null
 
-    /**
-     * Déplace une tuile d'un index à un autre dans la liste.
-     * C'est LazyVerticalGrid qui gère l'affichage ensuite.
-     */
-    fun moveTile(fromIndex: Int, toIndex: Int) {
-        val list = dashboardTiles.toMutableList()
-        if (fromIndex in list.indices && toIndex in list.indices) {
-            if (fromIndex < toIndex) {
-                for (i in fromIndex until toIndex) Collections.swap(list, i, i + 1)
+            // 2. EXTRACTION COULEURS (Palette intelligente)
+            val paletteSource = finalBitmap ?: originalBitmap
+            val p = Palette.from(paletteSource).maximumColorCount(32).generate()
+
+            val isSystemDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            val isDark = isSystemDark
+
+            // CORRECTION COULEUR : On cherche la couleur la plus représentative
+            // En mode sombre, on veut la couleur "Vibrant" (la plus peps)
+            // En mode clair, on préfère "Muted" ou "Dominant" pour ne pas agresser les yeux
+            val defaultColor = if(isDark) 0xFF0078D4.toInt() else 0xFFFFFFFF.toInt()
+
+            val seedColorInt = if (isDark) {
+                p.getVibrantColor(p.getDominantColor(defaultColor))
             } else {
-                for (i in fromIndex downTo toIndex + 1) Collections.swap(list, i, i - 1)
+                p.getLightVibrantColor(p.getDominantColor(defaultColor))
             }
+            val seedColor = Color(seedColorInt)
 
-            dashboardTiles.clear()
-            dashboardTiles.addAll(list)
-            saveDebouncer.tryEmit(Unit)
+            // 3. LE FIX EST ICI : PLUS DE DÉGRADÉ MOCHE !
+            // On veut une "nappe" de couleur uniforme, comme une vitre teintée.
+
+            // Opacité de la teinte (combien de couleur on injecte)
+            val tintStrength = if (isDark) 0.12f else 0.30f
+
+            // Au lieu d'un verticalGradient qui va vers 0, on met la MÊME couleur partout.
+            // On utilise SolidColor pour être plat, ou un gradient très subtil pour la lumière.
+            val tintBrush = androidx.compose.ui.graphics.SolidColor(
+                seedColor.copy(alpha = tintStrength)
+            )
+
+            // 4. SURFACE (Le fond de base)
+            // C'est la couche qui "bouche" les trous.
+            // En Dark : Gris très foncé (presque noir) avec transparence moyenne.
+            // En Light : Blanc laiteux avec transparence moyenne.
+            val surfaceColor = if (isDark) Color(0xFF181818) else Color(0xFFF9F9F9)
+            val surfaceAlpha = if (isDark) 0.65f else 0.50f
+
+            val noiseBrush = try { NoiseGenerator.generate(isDark) } catch(e:Exception){ null }
+            val noiseAlpha = if (isDark) 0.05f else 0.12f
+
+            val params = MicaParams(
+                surfaceColor = surfaceColor,
+                surfaceAlpha = surfaceAlpha,
+                tintBrush = tintBrush, // <-- Maintenant c'est une couleur unie propre
+                tintAlpha = 1f,
+                primaryColor = if (isDark) Color.White else Color.Black,
+                noiseBrush = noiseBrush,
+                dominantColor = seedColor,
+                noiseAlpha = noiseAlpha,
+                contentColor = if (isDark) Color.White else Color.Black,
+                blurredWallpaperBitmap = finalBitmap,
+                isDark = isDark
+            )
+
+            withContext(Dispatchers.Main) {
+                _micaParams.value = params
+                WallpaperRepository.micaParams.value = params
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    fun refreshWallpaperVisuals() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val drawable = WallpaperManager.getInstance(context).drawable
+            if (drawable != null) {
+                val bitmap = drawable.toBitmap()
+                updateMicaFromBitmap(bitmap)
+            }
         }
     }
 
-    /**
-     * Change la taille et laisse la grille se réorganiser toute seule.
-     */
+    // ... (Le reste des méthodes setCustomWallpaper, toggleTransparency, etc. reste inchangé) ...
+
+    fun toggleTransparency(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { settingsManager.setTransparencyEnabled(enabled) }
+    }
+
+    fun setCustomWallpaper(uri: Uri) {
+        micaCalculationJob?.cancel()
+        micaCalculationJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val inputStreamUi = context.contentResolver.openInputStream(uri)
+                val bitmapUi = BitmapFactory.decodeStream(inputStreamUi)
+                inputStreamUi?.close()
+                if (bitmapUi != null) updateMicaFromBitmap(bitmapUi)
+
+                settingsManager.setWallpaper(type = "URI", value = uri.toString())
+                val inputStreamSys = context.contentResolver.openInputStream(uri)
+                if (inputStreamSys != null) {
+                    WallpaperManager.getInstance(context).setStream(inputStreamSys)
+                    inputStreamSys.close()
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    fun updateWallpaperPreference(type: String, value: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsManager.setWallpaper(type, value)
+            if (type == "SOLID") {
+                val colorInt = value.toIntOrNull() ?: android.graphics.Color.BLACK
+                val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(colorInt)
+                updateMicaFromBitmap(bitmap)
+            }
+        }
+    }
+
+    fun moveTile(fromIndex: Int, toIndex: Int) {
+        val list = dashboardTiles.toMutableList()
+        if (fromIndex in list.indices && toIndex in list.indices) {
+            if (fromIndex < toIndex) for (i in fromIndex until toIndex) Collections.swap(list, i, i + 1)
+            else for (i in fromIndex downTo toIndex + 1) Collections.swap(list, i, i - 1)
+            dashboardTiles.clear(); dashboardTiles.addAll(list); saveDebouncer.tryEmit(Unit)
+        }
+    }
+
     fun resizeTile(tileId: String, newSize: TileSize) {
         val index = dashboardTiles.indexOfFirst { it.id == tileId }
         if (index != -1) {
             val updatedTile = dashboardTiles[index].copy(size = newSize)
-            dashboardTiles[index] = updatedTile
-            saveDebouncer.tryEmit(Unit)
+            dashboardTiles[index] = updatedTile; saveDebouncer.tryEmit(Unit)
         }
     }
 
-    /**
-     * Ajoute à la fin de la liste.
-     */
     fun pinApp(app: AppModel) {
         viewModelScope.launch(Dispatchers.Default) {
             val type = if (app.packageName.contains("clock")) TileType.CLOCK else TileType.APPLICATION
-
-            // On ajoute simplement à la fin
-            var tile = TileConfig(
-                id = UUID.randomUUID().toString(),
-                title = app.label,
-                icon = null,
-                size = TileSize.SMALL,
-                type = type,
-                packageName = app.packageName,
-                col = 0, row = 0
-            )
-
+            var tile = TileConfig(UUID.randomUUID().toString(), app.label, null, TileSize.SMALL, type, app.packageName, 0, 0)
             if (type == TileType.APPLICATION) {
                 tile = runCatching { tile.copy(icon = TileIcon.AndroidIcon(pm.getApplicationIcon(app.packageName))) }.getOrDefault(tile)
             }
-
-            withContext(Dispatchers.Main) {
-                dashboardTiles.add(tile)
-                saveDebouncer.tryEmit(Unit)
-            }
+            withContext(Dispatchers.Main) { dashboardTiles.add(tile); saveDebouncer.tryEmit(Unit) }
         }
     }
 
-    fun unpinTile(id: String) {
-        dashboardTiles.removeAll { it.id == id }
-        saveDebouncer.tryEmit(Unit)
-    }
-
-    // =================================================================================
-    // UTILS & PERSISTENCE
-    // =================================================================================
+    fun unpinTile(id: String) { dashboardTiles.removeAll { it.id == id }; saveDebouncer.tryEmit(Unit) }
 
     private fun setupAutoSave() {
         viewModelScope.launch { saveDebouncer.debounce(500).collectLatest { saveTilesToStorage() } }
@@ -207,10 +287,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val json = dashboardPrefs.getString("saved_tiles_data", null)
             if (json != null) gson.fromJson<List<TileConfig>>(json, object:TypeToken<List<TileConfig>>(){}.type) else emptyList()
         }.getOrElse { emptyList() }
-
-        val valid = list.filterNotNull().map { if (it.size == null) it.copy(size = TileSize.SMALL) else it }
-        val rehydrated = valid.map {
-            if (it.packageName.isNotEmpty()) runCatching { it.copy(icon = TileIcon.AndroidIcon(pm.getApplicationIcon(it.packageName))) }.getOrDefault(it) else it
+        val rehydrated = list.filterNotNull().mapNotNull { tile ->
+            if (tile.id == null) return@mapNotNull null
+            val tileWithSize = if (tile.size == null) tile.copy(size = TileSize.SMALL) else tile
+            if (tileWithSize.packageName.isNotEmpty()) {
+                runCatching {
+                    val d = pm.getApplicationIcon(tileWithSize.packageName)
+                    tileWithSize.copy(icon = TileIcon.AndroidIcon(BitmapDrawable(context.resources, drawableToBitmap(d))))
+                }.getOrDefault(tileWithSize)
+            } else tileWithSize
         }
         withContext(Dispatchers.Main) { dashboardTiles.clear(); dashboardTiles.addAll(rehydrated) }
     }
@@ -236,70 +321,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun hasNotificationPermission(): Boolean {
         val l = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
         return l != null && l.contains(context.packageName)
-    }
-
-    fun setCustomWallpaper(uri: Uri) {
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val r = context.contentResolver
-                context.openFileOutput("custom_wallpaper.jpg", Context.MODE_PRIVATE).use { o -> r.openInputStream(uri)?.use { i -> i.copyTo(o) } }
-                settingsManager.setWallpaper("FILE", context.getFileStreamPath("custom_wallpaper.jpg").absolutePath)
-                r.openInputStream(uri)?.use { WallpaperManager.getInstance(context).setStream(it) }
-            }
-        }
-    }
-
-    private fun observeWallpaperSettings() {
-        viewModelScope.launch(Dispatchers.IO) {
-            settingsManager.wallpaperType.combine(settingsManager.wallpaperValue) { t, v -> Pair(t, v) }
-                .collectLatest { (t, v) -> calculateMicaFromWallpaper(t, v) }
-        }
-    }
-
-    private suspend fun calculateMicaFromWallpaper(type: String, value: String) {
-        val b = withContext(Dispatchers.IO) {
-            runCatching {
-                when (type) {
-                    "FILE" -> if (File(value).exists()) decodeSampledBitmap(value) else null
-                    "RES" -> value.toIntOrNull()?.let { BitmapFactory.decodeResource(context.resources, it) }
-                    "URI" -> context.contentResolver.openInputStream(Uri.parse(value))?.use { BitmapFactory.decodeStream(it) }
-                    else -> null
-                }
-            }.getOrNull()
-        }
-
-        if (b != null) {
-            withContext(Dispatchers.Default) {
-                val p = Palette.from(b).maximumColorCount(16).generate()
-                val isDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-                val tint = if (isDark) Color(p.getVibrantColor(p.getMutedColor(0xFFFFFFFF.toInt()))) else Color(p.getLightVibrantColor(p.getDominantColor(0xFFCCCCCC.toInt())))
-
-                val params = MicaParams(
-                    surfaceColor = if (isDark) Color(0xFF202020) else Color(0xFFFFFFFF),
-                    primaryColor = if (isDark) Color(0xFFF6F6F6) else Color(0xFF1E1E1E),
-                    tintBrush = Brush.verticalGradient(
-                        listOf(tint.copy(if(isDark) 0.12f else 0.05f), if(isDark) tint.copy(0.02f) else Color.Transparent)
-                    ),
-                    tintAlpha = 1f,
-                    noiseBrush = try { NoiseGenerator.generate(isDark) } catch(e:Exception){null},
-                    noiseAlpha = if (isDark) 0.04f else 0.02f,
-                    surfaceAlpha = if (isDark) 0.25f else 0.55f
-                )
-                withContext(Dispatchers.Main) {
-                    _micaParams.value = params
-                    WallpaperRepository.micaParams.value = params
-                }
-            }
-        }
-    }
-
-    private fun decodeSampledBitmap(path: String): Bitmap? {
-        return runCatching {
-            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, o)
-            o.inSampleSize = 2; o.inJustDecodeBounds = false
-            BitmapFactory.decodeFile(path, o)
-        }.getOrNull()
     }
 
     fun moveApp(f: Int, t: Int) {

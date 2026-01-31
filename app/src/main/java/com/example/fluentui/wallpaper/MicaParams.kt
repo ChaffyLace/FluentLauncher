@@ -19,9 +19,12 @@ data class MicaParams(
     val tintAlpha: Float,
     val primaryColor: Color,
     val noiseBrush: Brush?,
+    val dominantColor: Color,
     val noiseAlpha: Float,
     val contentColor: Color = Color.White,
-    val blurredWallpaperBitmap: Bitmap? = null
+    val blurredWallpaperBitmap: Bitmap? = null,
+    val isDark: Boolean = true
+
 )
 
 object WallpaperRepository {
