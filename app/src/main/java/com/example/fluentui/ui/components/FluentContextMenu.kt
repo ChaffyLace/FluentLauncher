@@ -1,6 +1,13 @@
 package com.example.fluentui.ui.components
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.graphics.BlurMaskFilter
+import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,20 +15,24 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import com.example.fluentui.ui.components.AppActions
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +44,44 @@ import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.regular.Delete
 import fluent.ui.system.icons.regular.Info
 import fluent.ui.system.icons.regular.Pin
+
+// ==============================================================================
+// CUSTOM FLUENT SHADOW (V2 - Correction du "Halo baveux")
+// ==============================================================================
+fun Modifier.fluentDropShadow(
+    color: Color,
+    borderRadius: Dp,
+    blurRadius: Dp,
+    offsetY: Dp,
+    offsetX: Dp = 0.dp,
+    spread: Dp = 0.dp // NOUVEAU : Permet de contracter l'ombre pour qu'elle ne bave pas en haut
+) = this.drawBehind {
+    this.drawIntoCanvas { canvas ->
+        val paint = Paint()
+        val frameworkPaint = paint.asFrameworkPaint()
+        frameworkPaint.color = color.toArgb()
+
+        if (blurRadius != 0.dp) {
+            frameworkPaint.maskFilter = BlurMaskFilter(blurRadius.toPx(), BlurMaskFilter.Blur.NORMAL)
+        }
+
+        val spreadPx = spread.toPx()
+
+        canvas.drawRoundRect(
+            left = offsetX.toPx() - spreadPx,
+            top = offsetY.toPx() - spreadPx,
+            right = size.width + offsetX.toPx() + spreadPx,
+            bottom = size.height + offsetY.toPx() + spreadPx,
+            radiusX = borderRadius.toPx(),
+            radiusY = borderRadius.toPx(),
+            paint = paint
+        )
+    }
+}
+
+// ==============================================================================
+// MAIN CONTEXT MENU
+// ==============================================================================
 
 @SuppressLint("ConfigurationScreenWidthHeight")
 @Composable
@@ -53,7 +102,6 @@ fun FluentContextMenu(
 
     // COULEURS
     val textColor = micaParams?.contentColor ?: (if(isDark) Color.White else Color.Black)
-    // Icônes un peu plus discrètes que le texte pour la hiérarchie visuelle
     val iconColor = textColor.copy(alpha = 0.8f)
 
     // CALCUL POSITION
@@ -63,83 +111,124 @@ fun FluentContextMenu(
     val vOffset = if (showBelow) {
         with(density) { (iconSize + 4).dp.roundToPx() }
     } else {
-        with(density) { -170.dp.roundToPx() } // Ajusté pour la nouvelle taille
+        with(density) { -170.dp.roundToPx() }
     }
 
     // DESIGN SYSTEM WINDOWS 11
-    val cornerRadius = 10.dp // Arrondi standard Windows 11
+    val cornerRadius = 8.dp
     val menuShape = RoundedCornerShape(cornerRadius)
-    val borderColor = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.1f)
+    val borderColor = if (isDark) Color.White.copy(0.12f) else Color.Black.copy(0.08f)
+
+    // Matériau de base un peu plus opaque pour mieux cacher l'arrière-plan
     val solidWindowsColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFAFAFA)
+
+    // ANIMATION FLUIDE
+    var isVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { isVisible = true }
+
+    val scale by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0.85f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium),
+        label = "scale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(150),
+        label = "alpha"
+    )
 
     Popup(
         alignment = Alignment.TopCenter,
         offset = IntOffset(0, vOffset),
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            isVisible = false
+            onDismiss()
+        },
         properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .width(260.dp) // <-- ELARGISSEMENT (Évite le texte coupé "...")
+                // Padding externe obligatoire pour que la Popup ne coupe pas l'ombre
+                .padding(16.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    this.alpha = alpha
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                }
+                .width(260.dp)
+                // OMBRE WINDOWS 11 OPTIMISÉE
+                .fluentDropShadow(
+                    color = Color.Black.copy(alpha = if (isDark) 0.35f else 0.15f), // Alpha réduit
+                    borderRadius = cornerRadius,
+                    blurRadius = 16.dp, // Flou plus concentré
+                    offsetY = 8.dp,     // Décalée vers le bas
+                    spread = (-4).dp    // Shrink de 4dp : empêche l'ombre de baver en haut !
+                )
+                // FOND MICA OU SOLIDE
                 .then(
                     if (isTransparencyEnabled) {
                         Modifier.fluentMicaComplex(
                             micaParams = micaParams,
                             enabled = true,
-                            elevation = 24.dp,
+                            elevation = 0.dp,
                             shape = menuShape
                         )
                     } else {
-                        Modifier
-                            .shadow(24.dp, menuShape)
-                            .background(solidWindowsColor, menuShape)
-                            .border(1.dp, borderColor, menuShape)
+                        Modifier.background(solidWindowsColor, menuShape)
                     }
                 )
-                .padding(5.dp) // Petit padding externe (contour du menu)
+                .border(1.dp, borderColor, menuShape)
+                .clip(menuShape)
         ) {
-            // ITEM 1 : Épingler
-            ContextMenuItem(
-                icon = FluentIcons.Regular.Pin,
-                text = "Épingler au menu Démarrer",
-                textColor = textColor,
-                iconColor = iconColor,
-                onClick = { onPin(); onDismiss() }
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp) // Marge interne respirante
+            ) {
+                ContextMenuItem(
+                    icon = FluentIcons.Regular.Pin,
+                    text = "Épingler au menu Démarrer",
+                    textColor = textColor,
+                    iconColor = iconColor,
+                    onClick = { onPin(); onDismiss() }
+                )
 
-            // Espacement très fin entre les items
-            Spacer(Modifier.height(2.dp))
+                ContextMenuItem(
+                    icon = FluentIcons.Regular.Info,
+                    text = "À propos de l'appli",
+                    textColor = textColor,
+                    iconColor = iconColor,
+                    onClick = {
+                        AppActions.openAppInfo(context, app.packageName)
+                        onDismiss()
+                    }
+                )
 
-            // ITEM 2 : À PROPOS
-            ContextMenuItem(
-                icon = FluentIcons.Regular.Info,
-                text = "À propos de l'appli",
-                textColor = textColor,
-                iconColor = iconColor,
-                onClick = { AppActions.openAppInfo(context, app.packageName); onDismiss() }
-            )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp, horizontal = 12.dp),
+                    thickness = 1.dp,
+                    color = textColor.copy(alpha = 0.1f)
+                )
 
-            // SÉPARATEUR (Style Windows 11 : fin et subtil)
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 5.dp, horizontal = 10.dp),
-                thickness = 1.dp,
-                color = textColor.copy(alpha = 0.08f)
-            )
-
-            // ITEM 3 : Désinstaller
-            ContextMenuItem(
-                icon = FluentIcons.Regular.Delete,
-                text = "Désinstaller",
-                textColor = textColor,
-                iconColor = iconColor,
-                // On garde la couleur normale ou on met du rouge si tu veux un style "Danger"
-                onClick = {
-                    AppActions.uninstallApp(context, app.packageName) // <-- Appelle le fichier qu'on vient de créer
-                    onDismiss() // Ferme le menu
-                }            )
+                ContextMenuItem(
+                    icon = FluentIcons.Regular.Delete,
+                    text = "Désinstaller",
+                    textColor = Color(0xFFE53935), // Rouge Windows
+                    iconColor = Color(0xFFE53935),
+                    onClick = {
+                        AppActions.uninstallApp(context, app.packageName)
+                        onDismiss()
+                    }
+                )
+            }
         }
     }
 }
+
+// ==============================================================================
+// MENU ITEM
+// ==============================================================================
 
 @Composable
 private fun ContextMenuItem(
@@ -148,34 +237,32 @@ private fun ContextMenuItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(42.dp) // Hauteur compacte mais tactile
-            .clip(RoundedCornerShape(4.dp)) // Arrondi au survol (Hover effect style)
+            .height(40.dp)
+            .padding(horizontal = 6.dp) // Marge externe pour l'effet de hover
+            .clip(RoundedCornerShape(6.dp)) // Bouton légèrement plus arrondi à l'intérieur
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp), // Marge interne gauche/droite
+            .padding(horizontal = 10.dp), // Marge interne
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. ICÔNE À GAUCHE (Standard Windows)
-        // Box fixe pour aligner parfaitement le texte même si l'icône change
         Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = iconColor,
-                modifier = Modifier.size(18.dp) // Icône fine et élégante
+                modifier = Modifier.size(18.dp)
             )
         }
 
-        Spacer(Modifier.width(12.dp)) // Espace entre icône et texte
+        Spacer(Modifier.width(14.dp))
 
-        // 2. TEXTE
         Text(
             text = text,
             color = textColor,
-            fontSize = 14.sp, // Taille standard lisible
-            fontWeight = FontWeight.Normal, // Pas de gras inutile, c'est plus propre
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f) // Prend toute la place restante
+            modifier = Modifier.weight(1f)
         )
     }
 }

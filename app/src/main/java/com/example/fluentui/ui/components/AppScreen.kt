@@ -2,14 +2,18 @@ package com.example.fluentui.ui.components
 
 import android.app.Application
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -19,7 +23,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +49,36 @@ import com.example.fluentui.wallpaper.WallpaperLayer
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
+// ==============================================================================
+// AGSL SHADER — WINDOWS 11 ACRYLIC NOISE
+// ==============================================================================
+private const val ACRYLIC_NOISE_SHADER = """
+    uniform float2 resolution;
+    float random(float2 st) {
+        return fract(sin(dot(st.xy, float2(12.9898,78.233))) * 43758.5453123);
+    }
+    half4 main(float2 fragCoord) {
+        float noise = random(fragCoord);
+        return half4(noise, noise, noise, 0.05);
+    }
+"""
+
+fun Modifier.windowsAcrylicNoise(isTransparencyEnabled: Boolean): Modifier = composed {
+    if (isTransparencyEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val shader = remember { android.graphics.RuntimeShader(ACRYLIC_NOISE_SHADER) }
+        this.drawWithCache {
+            shader.setFloatUniform("resolution", size.width, size.height)
+            val brush = ShaderBrush(shader)
+            onDrawBehind { drawRect(brush = brush) }
+        }
+    } else {
+        this
+    }
+}
+
+// ==============================================================================
+// MAIN APP SCREEN (ROOT COMPOSABLE)
+// ==============================================================================
 @Composable
 fun AppScreen(
     viewModel: AppViewModel = viewModel(),
@@ -51,16 +89,13 @@ fun AppScreen(
     val isDark = isSystemInDarkTheme()
     val settingsManager = remember { SettingsManager(context) }
 
-    // --- LE LANCEUR DE GALERIE ---
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        if (uri != null) {
-            viewModel.setCustomWallpaper(uri)
-        }
+        uri?.let { viewModel.setCustomWallpaper(it) }
     }
 
-    // --- Settings Collection ---
+    // --- STATE COLLECTION ---
     val wpType by settingsManager.wallpaperType.collectAsState("SOLID")
     val wpValue by settingsManager.wallpaperValue.collectAsState("-16777216")
     val accentColorInt by settingsManager.accentColor.collectAsState(0xFF60CDFF.toInt())
@@ -98,25 +133,35 @@ fun AppScreen(
             when (event) {
                 is NavigationEvent.ScrollToHome -> {
                     if (pagerState.currentPage != 0) {
-                        pagerState.animateScrollToPage(0, 0f, spring(stiffness = Spring.StiffnessMedium))
+                        pagerState.animateScrollToPage(
+                            page = 0,
+                            pageOffsetFraction = 0f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMedium)
+                        )
                     }
                 }
             }
         }
     }
 
+    // --- SEARCH ---
     val allApps by viewModel.otherApps
-    val searchViewModel: SearchViewModel = viewModel(factory = SearchViewModel.Factory(context.applicationContext as Application))
+    val searchViewModel: SearchViewModel = viewModel(
+        factory = SearchViewModel.Factory(context.applicationContext as Application)
+    )
     val searchState by searchViewModel.uiState.collectAsState()
 
     LaunchedEffect(allApps) { searchViewModel.updateApps(allApps) }
 
     val micaParams by viewModel.micaParams.collectAsState()
 
+    // --- UI STATES ---
     var showSettings by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
+
     val isDashboard = pagerState.currentPage == 0
     val isSearchVisible = isSearchActive || searchState.query.isNotEmpty()
+
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -135,75 +180,196 @@ fun AppScreen(
         }
     }
 
-    val rawProgress by remember { derivedStateOf { if (isSearchVisible) 1f else (pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f) } }
-    val motionProgress by animateFloatAsState(targetValue = rawProgress, animationSpec = FluentMotion.pageScrollSpec(), label = "MotionProgress")
-    val contentAlpha by animateFloatAsState(if (isSearchVisible) 0f else 1f, FluentMotion.enterSpec(FluentMotion.DurationFast), label = "alpha")
+    // --- ANIMATIONS ---
+    val rawProgress by remember {
+        derivedStateOf {
+            if (isSearchVisible) 1f
+            else (pagerState.currentPage.toFloat() + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
+        }
+    }
 
-    Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { if (isSearchVisible) closeSearch() } }) {
+    val motionProgress by animateFloatAsState(
+        targetValue = rawProgress,
+        animationSpec = FluentMotion.pageScrollSpec(),
+        label = "MotionProgress"
+    )
 
-        WallpaperLayer(settings = settingsState, isDark = isDark, scrollProgress = motionProgress,)
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (isSearchVisible) 0f else 1f,
+        animationSpec = FluentMotion.enterSpec(FluentMotion.DurationFast),
+        label = "LayerAlpha"
+    )
 
-        Box(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha }) {
-            VerticalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                pageSpacing = 0.dp,
-                flingBehavior = PagerDefaults.flingBehavior(
-                    state = pagerState,
-                    snapPositionalThreshold = 0.05f,
-                    snapAnimationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
-                )
-            ) { page ->
-                Box(modifier = Modifier
+    val backgroundBlur by animateDpAsState(
+        targetValue = if (isSearchVisible && settingsState.transparencyEnabled) 45.dp else 0.dp,
+        animationSpec = tween(400),
+        label = "AcrylicBlur"
+    )
+
+    // ==============================================================================
+    // ROOT UI STACK
+    // ==============================================================================
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures { if (isSearchVisible) closeSearch() }
+            }
+    ) {
+
+        // --- LAYERS 1 & 2: WALLPAPER + PAGER ---
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(backgroundBlur)
+        ) {
+            WallpaperLayer(
+                settings = settingsState,
+                isDark = isDark,
+                scrollProgress = motionProgress
+            )
+
+            Box(
+                modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
-                        if (page == 0) {
-                            translationY = pageOffset * size.height * 0.3f
-                            val scale = 1f - (pageOffset.absoluteValue * 0.05f)
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = (1f - pageOffset.absoluteValue * 3f).coerceIn(0f, 1f)
+                    .graphicsLayer { alpha = contentAlpha }
+            ) {
+                VerticalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    pageSpacing = 0.dp,
+                    flingBehavior = PagerDefaults.flingBehavior(
+                        state = pagerState,
+                        snapPositionalThreshold = 0.05f,
+                        snapAnimationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessHigh
+                        )
+                    )
+                ) { page ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                                if (page == 0) {
+                                    translationY = pageOffset * size.height * 0.3f
+                                    val scale = 1f - (pageOffset.absoluteValue * 0.05f)
+                                    scaleX = scale
+                                    scaleY = scale
+                                    alpha = (1f - pageOffset.absoluteValue * 3f).coerceIn(0f, 1f)
+                                }
+                            }
+                    ) {
+                        when (page) {
+                            0 -> DashboardPage(viewModel = viewModel)
+                            1 -> AppGridWrapper(viewModel, settingsManager, micaParams)
                         }
                     }
+                }
+            }
+        }
+
+        // --- LAYER 3: SEARCH OVERLAY (TRUE ACRYLIC) ---
+        FluentReveal(
+            visible = isSearchVisible,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        if (isDark) Color(0xFF1E1E1E).copy(alpha = if (settingsState.transparencyEnabled) 0.88f else 1f)
+                        else Color(0xFFF3F3F3).copy(alpha = if (settingsState.transparencyEnabled) 0.88f else 1f)
+                    )
+                    .windowsAcrylicNoise(settingsState.transparencyEnabled)
+                    .statusBarsPadding()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { closeSearch() }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imePadding()
+                        .padding(bottom = 90.dp) // Laisse la place pour la pilule de recherche
                 ) {
-                    when (page) {
-                        0 -> DashboardPage(viewModel = viewModel)
-                        1 -> AppGridWrapper(viewModel, settingsManager, micaParams)
+                    if (searchState.query.isEmpty()) {
+                        SearchDashboard(
+                            topApps = searchState.topApps.ifEmpty { allApps.take(8) },
+                            recentSearches = searchState.recentSearches,
+                            onAppClick = { pkg ->
+                                searchViewModel.onAppLaunched(pkg, searchState.query)
+                                context.packageManager.getLaunchIntentForPackage(pkg)?.let {
+                                    context.startActivity(it)
+                                    closeSearch()
+                                }
+                            },
+                            onRecentSearchClick = { query ->
+                                searchViewModel.onQueryChange(query)
+                                isSearchActive = true
+                            },
+                            isDark = isDark,
+                            accentColor = Color(accentColorInt)
+                        )
+                    } else {
+                        SearchResultsList(
+                            results = searchState.results,
+                            isDark = isDark,
+                            accentColor = Color(accentColorInt),
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
             }
         }
 
-        FluentReveal(visible = isSearchVisible, modifier = Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().background(if (isDark) Color.Black.copy(0.6f) else Color.White.copy(0.6f)).statusBarsPadding().clickable(null, null) { closeSearch() }) {
-                if (searchState.query.isEmpty()) SearchDashboard(allApps, { context.packageManager.getLaunchIntentForPackage(it)?.let { i -> context.startActivity(i); closeSearch() } }, isDark)
-                else SearchResultsList(searchState.results, isDark, Color(accentColorInt), Modifier.fillMaxSize().padding(bottom = 100.dp))
-            }
+        // --- LAYER 4: FLOATING SEARCH PILL ---
+        // DE RETOUR ICI : Permanente, visible tout le temps, au-dessus du reste.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .imePadding()
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 16.dp)
+        ) {
+            FluentSearchPill(
+                searchQuery = searchState.query,
+                onQueryChange = { query ->
+                    searchViewModel.onQueryChange(query)
+                    if (!isSearchActive && query.isNotEmpty()) isSearchActive = true
+                },
+                onSettingsClick = { showSettings = true },
+                onFocusChange = { focused -> if (focused) isSearchActive = true },
+                isDark = isDark,
+                isTransparencyEnabled = settingsState.transparencyEnabled
+            )
         }
 
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp).imePadding()) {
-            FluentSearchPill(searchState.query, { searchViewModel.onQueryChange(it); if (!isSearchActive && it.isNotEmpty()) isSearchActive = true }, { showSettings = true }, { if (it) isSearchActive = true }, isDark)
-        }
-
-        // --- CORRECTION DES PARAMÈTRES ICI ---
+        // --- LAYER 5: SETTINGS OVERLAY ---
         if (showSettings) {
             SettingsOverlay(
-                isVisible = showSettings,              // Correction : 'show' -> 'isVisible'
+                isVisible = showSettings,
                 micaParams = micaParams,
                 allApps = allApps,
-                onDismiss = { showSettings = false },  // Correction : 'onClose' -> 'onDismiss'
+                onDismiss = { showSettings = false },
                 viewModel = settingsViewModel,
-                onWallpaperChangeClick = {             // Correction : 'onOpenGallery' -> 'onWallpaperChangeClick'
-                    galleryLauncher.launch("image/*")
-                }
+                onWallpaperChangeClick = { galleryLauncher.launch("image/*") }
             )
         }
     }
 }
 
+// ==============================================================================
+// APP GRID WRAPPER
+// ==============================================================================
 @Composable
-fun AppGridWrapper(viewModel: AppViewModel, settingsManager: SettingsManager, micaParams: MicaParams) {
+fun AppGridWrapper(
+    viewModel: AppViewModel,
+    settingsManager: SettingsManager,
+    micaParams: MicaParams
+) {
     val colCount by settingsManager.columnCount.collectAsState(4)
     val rowCount by settingsManager.rowCount.collectAsState(6)
     val iconSize by settingsManager.iconSize.collectAsState(60f)
@@ -215,13 +381,34 @@ fun AppGridWrapper(viewModel: AppViewModel, settingsManager: SettingsManager, mi
     val vSpacing by settingsManager.verticalSpacing.collectAsState(16f)
 
     AppGrid(
-        viewModel = viewModel, columnCount = colCount, rowCount = rowCount, iconSize = iconSize, showLabels = showLabels, accentColor = Color(accentColorInt), isVertical = isVertical, fontSize = fontSize, verticalSpacing = vSpacing, hiddenApps = hiddenApps, onPinRequest = { viewModel.pinApp(it) },
+        viewModel = viewModel,
+        columnCount = colCount,
+        rowCount = rowCount,
+        iconSize = iconSize,
+        showLabels = showLabels,
+        accentColor = Color(accentColorInt),
+        isVertical = isVertical,
+        fontSize = fontSize,
+        verticalSpacing = vSpacing,
+        hiddenApps = hiddenApps,
+        onPinRequest = { viewModel.pinApp(it) },
         micaParams = micaParams
     )
 }
 
+// ==============================================================================
+// SYSTEM BAR CONTROLLER
+// ==============================================================================
 @Composable
 private fun SystemBarController(isDark: Boolean) {
     val view = LocalView.current
-    if (!view.isInEditMode) { SideEffect { (view.context as android.app.Activity).window.let { w -> androidx.core.view.WindowCompat.getInsetsController(w, view).apply { isAppearanceLightStatusBars = !isDark; isAppearanceLightNavigationBars = !isDark } } } }
+    if (!view.isInEditMode) {
+        SideEffect {
+            val activity = view.context as? android.app.Activity ?: return@SideEffect
+            androidx.core.view.WindowCompat.getInsetsController(activity.window, view).apply {
+                isAppearanceLightStatusBars = !isDark
+                isAppearanceLightNavigationBars = !isDark
+            }
+        }
+    }
 }

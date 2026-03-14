@@ -3,7 +3,7 @@ package com.example.fluentui.ui.motion
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -16,81 +16,89 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.fluentui.ui.system.rememberHaptics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 // =================================================================================
-// 1. CONSTANTES PHYSIQUES (MICROSOFT FLUENT)
+// 1. CONSTANTES PHYSIQUES (MICROSOFT FLUENT DESIGN)
 // =================================================================================
 object FluentMotion {
-    // Courbes de Bézier précises de Windows 11
-    val DecelerateEasing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1.0f) // Entrée douce
-    val AccelerateEasing = CubicBezierEasing(0.7f, 0.0f, 1.0f, 0.5f) // Sortie rapide
+    // Courbes de Bézier officielles Windows 11 (Aucun rebond)
+    val EntranceEasing = CubicBezierEasing(0.1f, 0.9f, 0.2f, 1.0f) // Arrivée rapide, freinage doux
+    val ExitEasing = CubicBezierEasing(0.7f, 0.0f, 1.0f, 0.5f)     // Départ lent, accélération rapide
+    val StandardEasing = FastOutSlowInEasing                       // Déplacements classiques
 
-    // Durées standard
+    // Durées standard de l'OS
     const val DurationFast = 150
-    const val DurationNormal = 300
-    const val DurationSlow = 500
+    const val DurationNormal = 250
+    const val DurationSlow = 400
 
-    // Specs physiques (Spring) pour un feeling "Organique"
-    fun <T> springFluent(
-        stiffness: Float = Spring.StiffnessMediumLow, // 400f - Un peu mou mais réactif
-        dampingRatio: Float = 0.85f // Pas trop de rebond, juste ce qu'il faut
-    ) = spring<T>(dampingRatio, stiffness)
-
-    fun <T> pageScrollSpec() = spring<T>(stiffness = Spring.StiffnessLow, dampingRatio = 1f)
-    fun <T> enterSpec(duration: Int) = tween<T>(duration, easing = DecelerateEasing)
+    // Remplacement des Springs par des Tweens paramétrés pour Fluent
+    fun <T> enterSpec(duration: Int = DurationNormal) = tween<T>(duration, easing = EntranceEasing)
+    fun <T> exitSpec(duration: Int = DurationFast) = tween<T>(duration, easing = ExitEasing)
+    fun <T> standardSpec(duration: Int = DurationNormal) = tween<T>(duration, easing = StandardEasing)
 }
 
 // =================================================================================
-// 2. FLUENT TILE (BOUTON PREMIUM)
+// 2. FLUENT TILE (BOUTON PREMIUM) - CORRIGÉ POUR LE DRAG & DROP
 // =================================================================================
 @Composable
 fun FluentTile(
     modifier: Modifier = Modifier,
-    isClickable: Boolean = true,
-    onClick: () -> Unit = {},
-    cornerRadius: Dp = 12.dp,
-    primaryColor: Color? = null,
-    // Ajout d'un paramètre pour gérer l'animation de lancement
+    isPressed: Boolean = false, // L'état est maintenant géré par le parent (ex: DashboardGrid)
     isLaunching: Boolean = false,
+    isDragging: Boolean = false,
+    dragProgress: Float = 0f,
+    cornerRadius: Dp = 16.dp,   // Aligné sur le standard défini dans MicaTile
+    primaryColor: Color? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
-    // État de la pression (Click)
-    var isPressed by remember { mutableStateOf(false) }
-    val haptics = rememberHaptics()
+    // SCALES COMBINÉES (Lancement > Glissement > Pression)
+    val targetScale = when {
+        isLaunching -> 1.5f
+        isDragging -> 1.02f // Subtil soulèvement au lieu d'un gros zoom
+        isPressed -> 0.97f  // Valeur exacte de la doc Microsoft (pas 0.94)
+        else -> 1f
+    }
 
-    // 1. Animation d'échelle (Le "Squish" au clic)
-    // Si on lance l'app, la tuile s'agrandit légèrement avant de disparaître (effet zoom in)
-    // Sinon, elle rétrécit au clic (effet bouton)
-    val targetScale = if (isLaunching) 1.5f else if (isPressed) 0.94f else 1f
     val scaleAnim by animateFloatAsState(
         targetValue = targetScale,
-        animationSpec = if (isLaunching) tween(400, easing = FluentMotion.DecelerateEasing) else spring(dampingRatio = 0.7f, stiffness = 600f),
+        animationSpec = when {
+            isLaunching -> FluentMotion.enterSpec(400)
+            isPressed -> tween(100, easing = LinearOutSlowInEasing) // Descente ultra-rapide
+            else -> FluentMotion.standardSpec() // Remontée fluide
+        },
         label = "TileScale"
     )
 
-    // 2. Animation d'élévation/Ombre
+    // ÉLÉVATION (Le glissement a la priorité)
+    val targetElevation = when {
+        isLaunching -> 0.dp
+        isDragging -> 8.dp // Ombre plus douce
+        isPressed -> 0.dp
+        else -> 0.dp
+    }
+
     val elevation by animateDpAsState(
-        targetValue = if (isPressed) 1.dp else if (isLaunching) 0.dp else 4.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        targetValue = targetElevation,
+        animationSpec = FluentMotion.standardSpec(),
         label = "TileElevation"
     )
 
-    // 3. Animation d'inclinaison (Tilt) - Optionnel mais très premium
-    // Pour l'instant on reste simple pour la perf, mais le graphicsLayer est prêt.
+    // ROTATION SUBTILE pendant le glissement
+    val rotation by animateFloatAsState(
+        targetValue = if (isDragging) dragProgress * 3f else 0f,
+        animationSpec = FluentMotion.standardSpec(150),
+        label = "TileRotation"
+    )
 
     Box(
         modifier = modifier
@@ -98,54 +106,78 @@ fun FluentTile(
                 scaleX = scaleAnim
                 scaleY = scaleAnim
                 shadowElevation = elevation.toPx()
+                rotationZ = rotation
                 shape = RoundedCornerShape(cornerRadius)
-                clip = true
-                // Point de pivot au centre pour un zoom équilibré
+                clip = false // Laisse le contenu gérer sa propre coupe pour ne pas abîmer les bordures
                 transformOrigin = TransformOrigin.Center
             }
-            .then(if (primaryColor != null) Modifier.background(primaryColor) else Modifier)
-            .pointerInput(isClickable) {
-                if (isClickable) {
-                    detectTapGestures(
-                        onPress = {
-                            if (!isLaunching) { // Bloque le clic si l'anim de lancement est en cours
-                                isPressed = true
-                                haptics.performPress()
-                                tryAwaitRelease()
-                                isPressed = false
-                                haptics.performRelease()
-                            }
-                        },
-                        onTap = {
-                            if (!isLaunching) onClick()
-                        }
-                    )
-                }
-            }
+            .then(if (primaryColor != null) Modifier.background(primaryColor, RoundedCornerShape(cornerRadius)) else Modifier)
+        // Supprimé : pointerInput et detectTapGestures.
+        // La détection des gestes doit être faite par la grille pour ne pas bloquer le Drag & Drop.
     ) {
         content()
     }
 }
 
 // =================================================================================
-// 3. LAUNCHER EXIT ANIMATION (L'EFFET "RECUL")
+// 3. DRAG PLACEHOLDER (Zone fantôme)
 // =================================================================================
-// Utilise ce wrapper autour de ton Grid de tuiles dans le DashboardPage
+@Composable
+fun FluentDragPlaceholder(
+    isVisible: Boolean,
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 16.dp
+) {
+    val alpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = FluentMotion.exitSpec(),
+        label = "PlaceholderAlpha"
+    )
+
+    val scale by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0.85f,
+        animationSpec = FluentMotion.enterSpec(),
+        label = "PlaceholderScale"
+    )
+
+    if (alpha > 0.01f) {
+        Box(
+            modifier = modifier
+                .graphicsLayer {
+                    this.alpha = alpha
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .background(
+                    color = Color.White.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(cornerRadius)
+                )
+                .border(
+                    width = 2.dp,
+                    color = Color.White.copy(alpha = 0.80f),
+                    shape = RoundedCornerShape(cornerRadius)
+                )
+        )
+    }
+}
+
+// =================================================================================
+// 4. LAUNCHER EXIT ANIMATION (Effet d'enfoncement de l'écran d'accueil)
+// =================================================================================
 @Composable
 fun FluentDashboardMotion(
     isAppLaunching: Boolean,
     content: @Composable () -> Unit
 ) {
-    // Quand une app se lance, le reste du dashboard recule et devient flou
     val scale by animateFloatAsState(
-        targetValue = if (isAppLaunching) 0.90f else 1f,
-        animationSpec = tween(400, easing = FluentMotion.DecelerateEasing),
+        targetValue = if (isAppLaunching) 0.92f else 1f,
+        animationSpec = FluentMotion.enterSpec(400),
         label = "DashboardScale"
     )
 
     val alpha by animateFloatAsState(
         targetValue = if (isAppLaunching) 0f else 1f,
-        animationSpec = tween(300), // Disparaît un peu plus vite que le zoom
+        animationSpec = FluentMotion.exitSpec(300),
         label = "DashboardAlpha"
     )
 
@@ -163,7 +195,7 @@ fun FluentDashboardMotion(
 }
 
 // =================================================================================
-// 4. LES AUTRES TUILES ANIMÉES (PEEK & FLIP)
+// 5. TUILES DYNAMIQUES (LIVE TILES)
 // =================================================================================
 @Composable
 fun FluentAnimLiveTile(
@@ -174,6 +206,7 @@ fun FluentAnimLiveTile(
     initialDelay: Long = Random.nextLong(0, 3000)
 ) {
     var isFront by remember { mutableStateOf(true) }
+
     LaunchedEffect(Unit) {
         delay(initialDelay)
         while (true) {
@@ -181,13 +214,13 @@ fun FluentAnimLiveTile(
             isFront = !isFront
         }
     }
-    Box(modifier = modifier.clip(RoundedCornerShape(12.dp))) { // CornerRadius unifié
+
+    Box(modifier = modifier.clip(RoundedCornerShape(16.dp))) {
         AnimatedContent(
             targetState = isFront,
             transitionSpec = {
-                // Animation de glissement fluide style Windows
-                slideInVertically(tween(600, easing = FluentMotion.DecelerateEasing)) { it } togetherWith
-                        slideOutVertically(tween(600, easing = FluentMotion.DecelerateEasing)) { -it }
+                slideInVertically(FluentMotion.enterSpec(500)) { it } togetherWith
+                        slideOutVertically(FluentMotion.exitSpec(500)) { -it }
             },
             label = "LiveTileAnim"
         ) { showFront ->
@@ -205,6 +238,7 @@ fun FluentAnimFlipTile(
     initialDelay: Long = Random.nextLong(0, 4000)
 ) {
     var isFront by remember { mutableStateOf(true) }
+
     LaunchedEffect(Unit) {
         delay(initialDelay)
         while (true) {
@@ -212,10 +246,10 @@ fun FluentAnimFlipTile(
             isFront = !isFront
         }
     }
-    // Flip 3D avec perspective
+
     val rotation by animateFloatAsState(
         targetValue = if (isFront) 0f else 180f,
-        animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = 0.7f), // Rebond agréable
+        animationSpec = FluentMotion.standardSpec(600),
         label = "FlipAnim"
     )
 
@@ -223,10 +257,9 @@ fun FluentAnimFlipTile(
         modifier = modifier
             .graphicsLayer {
                 rotationX = rotation
-                cameraDistance = 12f * density // Ajoute de la profondeur 3D
+                cameraDistance = 12f * density
             }
     ) {
-        // Gestion de la visibilité des faces (Backface Culling manuel)
         if (rotation <= 90f || rotation >= 270f) {
             Box(Modifier.fillMaxSize()) { frontContent() }
         } else {
@@ -236,26 +269,21 @@ fun FluentAnimFlipTile(
 }
 
 // =================================================================================
-// 5. ANIMATIONS GLOBALES (REVEAL, OVERSCROLL)
+// 6. ANIMATIONS GLOBALES (REVEAL, OVERSCROLL)
 // =================================================================================
-
 @Composable
 fun FluentReveal(visible: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    // Entrée : Zoom In + Fade In
-    // Sortie : Zoom Out + Fade Out
     val transition = updateTransition(visible, label = "Reveal")
 
     val alpha by transition.animateFloat(
-        transitionSpec = { tween(FluentMotion.DurationNormal) },
+        transitionSpec = { if (targetState) FluentMotion.enterSpec() else FluentMotion.exitSpec() },
         label = "Alpha"
     ) { if (it) 1f else 0f }
 
     val scale by transition.animateFloat(
-        transitionSpec = {
-            if (targetState) spring(dampingRatio = 0.8f) else tween(FluentMotion.DurationFast)
-        },
+        transitionSpec = { if (targetState) FluentMotion.enterSpec() else FluentMotion.exitSpec() },
         label = "Scale"
-    ) { if (it) 1f else 0.92f } // 0.92 -> 1.0 (Effet Pop)
+    ) { if (it) 1f else 0.95f }
 
     if (alpha > 0f) {
         Box(
@@ -272,13 +300,11 @@ fun FluentReveal(visible: Boolean, modifier: Modifier = Modifier, content: @Comp
 
 @Composable
 fun FluentParallax(scrollProgress: Float, content: @Composable () -> Unit) {
-    // Effet Parallaxe subtil sur l'axe X
     Box(
         modifier = Modifier.graphicsLayer {
-            translationX = -scrollProgress * 60f // Un peu plus prononcé
-            // On agrandit un peu le fond pour éviter les bords noirs lors du mouvement
-            scaleX = 1.1f
-            scaleY = 1.1f
+            translationX = -scrollProgress * 60f
+            scaleX = 1.05f // Réduit pour éviter la distorsion excessive
+            scaleY = 1.05f
         }
     ) {
         content()
@@ -291,28 +317,32 @@ fun FluentScrollView(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    // Overscroll élastique "Rubber Band"
-    var overscrollOffset by remember { mutableStateOf(0f) }
+    // Note: L'overscroll elastique est une pratique iOS. Sur Windows, c'est généralement
+    // un hard stop visuel, mais on garde une très légère inertie ici si tu y tiens.
+    var overscrollOffset by remember { mutableFloatStateOf(0f) }
+
     val animatedOverscroll by animateFloatAsState(
         targetValue = overscrollOffset,
-        animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f), // Très élastique
-        label = "RubberBand"
+        animationSpec = FluentMotion.standardSpec(150),
+        label = "Overscroll"
     )
 
-    // Remise à zéro automatique
     LaunchedEffect(overscrollOffset) {
         if (overscrollOffset != 0f) {
-            delay(50) // Petit délai pour laisser l'utilisateur voir l'étirement
+            delay(50)
             overscrollOffset = 0f
         }
     }
 
     val connection = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                // Facteur 0.2f pour une résistance forte (sensation lourde)
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
                 if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.Drag) {
-                    overscrollOffset += available.y * 0.2f
+                    overscrollOffset += available.y * 0.1f // Très résistif
                     return androidx.compose.ui.geometry.Offset(0f, available.y)
                 }
                 return androidx.compose.ui.geometry.Offset.Zero
