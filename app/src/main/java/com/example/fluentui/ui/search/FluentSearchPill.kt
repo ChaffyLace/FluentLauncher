@@ -4,8 +4,6 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -21,14 +19,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.fluentui.wallpaper.WallpaperRepository
+import com.example.fluentui.wallpaper.MicaState
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.color.SearchSparkle
 import fluent.ui.system.icons.filled.Search
@@ -44,20 +41,14 @@ fun FluentSearchPill(
     isDark: Boolean,
     isTransparencyEnabled: Boolean = true
 ) {
-    // Récupération des paramètres pour le grain (Noise)
-    val micaParams by WallpaperRepository.micaParams
+    val micaParams by MicaState.micaParams   // ← était Wallpaperrepository.micaParams
 
-    // =========================================================================
-    // FORMULE EXACTE DU MICA WINDOWS 11
-    // Base très opaque (85%-90%) pour l'effet solide, mais laisse saigner la couleur derrière
-    // =========================================================================
     val baseMicaColor = if (isDark) Color(0xFF202020) else Color(0xFFFAFAFA)
     val micaAlpha = if (isTransparencyEnabled) 0.85f else 1f
 
     val micaBrush = Brush.linearGradient(
         colors = listOf(
             baseMicaColor.copy(alpha = micaAlpha),
-            // Léger dégradé pour donner du volume au matériau
             if (isDark) Color(0xFF181818).copy(alpha = micaAlpha) else Color(0xFFF0F0F0).copy(alpha = micaAlpha)
         ),
         start = Offset(0f, 0f),
@@ -73,7 +64,6 @@ fun FluentSearchPill(
         label = "scale"
     )
 
-    // --- GPU OPTIMIZATION: SHIMMER ---
     val infiniteTransition = rememberInfiniteTransition(label = "Shimmer")
     val shimmerTranslate by if (isTransparencyEnabled) {
         infiniteTransition.animateFloat(
@@ -104,7 +94,7 @@ fun FluentSearchPill(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp) // Ergonomie Mobile conservée
+            .height(52.dp)
             .scale(scale)
             .shadow(
                 elevation = 4.dp,
@@ -112,15 +102,12 @@ fun FluentSearchPill(
                 spotColor = if (isDark) Color.Black else Color.Black.copy(0.15f)
             )
             .clip(windowsShape)
-            // Bordure Windows 11 "Light Catcher"
             .border(1.dp, borderColor, windowsShape)
     ) {
-
-        // ── LAYER 1 : Base Mica Solide & Translucide ──────────────────────────
-        // Plus d'image buggée ici. Juste le matériau pur.
+        // LAYER 1 : Base Mica
         Box(Modifier.fillMaxSize().background(micaBrush))
 
-        // ── LAYER 2 : Texture Grain (Acrylic Noise) ───────────────────────────
+        // LAYER 2 : Grain (Noise)
         val noiseBrush = micaParams?.noiseBrush
         val noiseAlpha = micaParams?.noiseAlpha ?: 0.05f
         if (isTransparencyEnabled && noiseBrush != null) {
@@ -132,7 +119,7 @@ fun FluentSearchPill(
             )
         }
 
-        // ── LAYER 3 : Contenu Tactile ─────────────────────────────────────────
+        // LAYER 3 : Contenu
         Row(
             modifier = Modifier
                 .fillMaxSize()

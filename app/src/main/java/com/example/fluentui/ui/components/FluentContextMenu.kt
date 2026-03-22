@@ -1,12 +1,7 @@
 package com.example.fluentui.ui.components
 
 import android.annotation.SuppressLint
-import android.content.ActivityNotFoundException
-import android.content.Intent
 import android.graphics.BlurMaskFilter
-import android.net.Uri
-import android.provider.Settings
-import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,7 +41,7 @@ import fluent.ui.system.icons.regular.Info
 import fluent.ui.system.icons.regular.Pin
 
 // ==============================================================================
-// CUSTOM FLUENT SHADOW (V2 - Correction du "Halo baveux")
+// CUSTOM FLUENT SHADOW (V2 - Ombre directionnelle propre, sans "halo sale")
 // ==============================================================================
 fun Modifier.fluentDropShadow(
     color: Color,
@@ -54,7 +49,7 @@ fun Modifier.fluentDropShadow(
     blurRadius: Dp,
     offsetY: Dp,
     offsetX: Dp = 0.dp,
-    spread: Dp = 0.dp // NOUVEAU : Permet de contracter l'ombre pour qu'elle ne bave pas en haut
+    spread: Dp = 0.dp
 ) = this.drawBehind {
     this.drawIntoCanvas { canvas ->
         val paint = Paint()
@@ -119,7 +114,7 @@ fun FluentContextMenu(
     val menuShape = RoundedCornerShape(cornerRadius)
     val borderColor = if (isDark) Color.White.copy(0.12f) else Color.Black.copy(0.08f)
 
-    // Matériau de base un peu plus opaque pour mieux cacher l'arrière-plan
+    // Matériau de base un peu plus opaque pour le mode solide
     val solidWindowsColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFAFAFA)
 
     // ANIMATION FLUIDE
@@ -157,21 +152,21 @@ fun FluentContextMenu(
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
                 }
                 .width(260.dp)
-                // OMBRE WINDOWS 11 OPTIMISÉE
+                // OMBRE WINDOWS 11 (Remplace le .shadow natif)
                 .fluentDropShadow(
-                    color = Color.Black.copy(alpha = if (isDark) 0.35f else 0.15f), // Alpha réduit
+                    color = Color.Black.copy(alpha = if (isDark) 0.35f else 0.15f),
                     borderRadius = cornerRadius,
-                    blurRadius = 16.dp, // Flou plus concentré
-                    offsetY = 8.dp,     // Décalée vers le bas
-                    spread = (-4).dp    // Shrink de 4dp : empêche l'ombre de baver en haut !
+                    blurRadius = 16.dp,
+                    offsetY = 8.dp,     // Ombre tirée vers le bas
+                    spread = (-4).dp    // Contractée pour ne pas baver vers le haut
                 )
                 // FOND MICA OU SOLIDE
                 .then(
                     if (isTransparencyEnabled) {
                         Modifier.fluentMicaComplex(
-                            micaParams = micaParams,
+                            micaParams = micaParams, // On passe l'objet récupéré de MicaState
                             enabled = true,
-                            elevation = 0.dp,
+                            elevation = 0.dp, // Surtout 0 pour ne pas recréer l'ombre Android par dessus !
                             shape = menuShape
                         )
                     } else {
@@ -184,7 +179,7 @@ fun FluentContextMenu(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp) // Marge interne respirante
+                    .padding(vertical = 4.dp) // Marge interne
             ) {
                 ContextMenuItem(
                     icon = FluentIcons.Regular.Pin,
@@ -214,7 +209,7 @@ fun FluentContextMenu(
                 ContextMenuItem(
                     icon = FluentIcons.Regular.Delete,
                     text = "Désinstaller",
-                    textColor = Color(0xFFE53935), // Rouge Windows
+                    textColor = Color(0xFFE53935), // Rouge Windows Destructif
                     iconColor = Color(0xFFE53935),
                     onClick = {
                         AppActions.uninstallApp(context, app.packageName)
@@ -238,10 +233,10 @@ private fun ContextMenuItem(
         modifier = Modifier
             .fillMaxWidth()
             .height(40.dp)
-            .padding(horizontal = 6.dp) // Marge externe pour l'effet de hover
-            .clip(RoundedCornerShape(6.dp)) // Bouton légèrement plus arrondi à l'intérieur
+            .padding(horizontal = 6.dp)
+            .clip(RoundedCornerShape(6.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp), // Marge interne
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {

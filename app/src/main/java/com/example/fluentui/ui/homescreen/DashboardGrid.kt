@@ -5,13 +5,16 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -21,20 +24,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -47,6 +54,7 @@ import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.ui.system.TileType
 import com.example.fluentui.ui.system.rememberHaptics
 import com.example.fluentui.wallpaper.MicaParams
+import com.example.fluentui.wallpaper.fluentMicaComplex
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.regular.Delete
 import fluent.ui.system.icons.regular.Info
@@ -55,34 +63,49 @@ import fluent.ui.system.icons.regular.StarEmphasis
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTES DE LA GRILLE
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
+// CONSTANTS
+// =============================================================================
 
-private const val COLUMNS = 6
-private const val ROWS = 20
-private val CELL_SPACING = 4.dp
-private val HORIZONTAL_PADDING = 16.dp
-private val TOP_PADDING = 60.dp
-private val BOTTOM_PADDING = 100.dp
+private const val COLUMNS               = 6
+private const val ROWS                  = 20
+private val   CELL_SPACING              = 4.dp
+private val   HORIZONTAL_PADDING        = 16.dp
+private val   TOP_PADDING               = 60.dp
+private val   BOTTOM_PADDING            = 100.dp
+private val   TILE_CORNER_RADIUS        = 16.dp
+private const val LAUNCH_DELAY_MS       = 150L
+private const val LAUNCH_RESET_MS       = 500L
+private const val DRAG_THRESHOLD_PX     = 15f
+private const val SCROLL_TRIGGER_PX     = 150f
+private const val SCROLL_STEP_PX        = 35f
 
-private val TILE_CORNER_RADIUS = 16.dp
-
-private const val LAUNCH_DELAY_MS = 150L
-private const val LAUNCH_RESET_MS = 500L
-
-private const val DRAG_THRESHOLD_PX = 15f
-private const val SCROLL_TRIGGER_ZONE_PX = 150f
-private const val SCROLL_STEP_PX = 35f
-
-// FIX #12 — Regex stricte pour valider les package names Android avant tout usage dans Uri/Intent.
-// Format attendu : com.example.app (au moins deux segments, alphanum + underscore uniquement)
 private val PACKAGE_NAME_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$")
-private fun String.isSafePackageName(): Boolean = PACKAGE_NAME_REGEX.matches(this)
+private fun String.isSafePackageName() = PACKAGE_NAME_REGEX.matches(this)
 
-// ─────────────────────────────────────────────────────────────────────────────
+/** Détermine si une tuile peut avoir un contenu Live Tile.
+ *  Doit rester en sync avec TileContentDispatcher. */
+private fun TileConfig.hasDynamicContent(): Boolean {
+    val pkg = packageName.lowercase()
+    return type == TileType.PHOTO    ||
+            type == TileType.MEDIA    ||
+            type == TileType.CALENDAR ||
+            type == TileType.CLOCK    ||
+            type == TileType.WIDGET   ||
+            pkg.contains("spotify")  ||
+            pkg.contains("music")    ||
+            pkg.contains("calendar") ||
+            pkg.contains("clock")    ||
+            pkg.contains("deskclock")||
+            pkg.endsWith(".settings")
+}
+
+// =============================================================================
+// DATA MODELS
+// =============================================================================
 
 internal data class GridPosition(val col: Int, val row: Int) {
     fun isPlaced() = col >= 0 && row >= 0
@@ -90,26 +113,40 @@ internal data class GridPosition(val col: Int, val row: Int) {
 }
 
 internal data class GridMetrics(
-    val cellSizePx: Int, val spacingPx: Int,
-    val paddingPx: Int, val columns: Int, val rows: Int
+    val cellSizePx: Int,
+    val spacingPx:  Int,
+    val paddingPx:  Int,
+    val columns:    Int,
+    val rows:       Int
 )
 
-internal data class TilePixelPosition(val x: Int, val y: Int, val width: Int, val height: Int)
+internal data class TilePixelPosition(
+    val x: Int, val y: Int,
+    val width: Int, val height: Int
+)
 
 private var TileConfig.gridPosition: GridPosition
-    get() = GridPosition(gridX, gridY)
+    get()      = GridPosition(gridX, gridY)
     set(value) { gridX = value.col; gridY = value.row }
+
+// =============================================================================
+// GRID LAYOUT MANAGER
+// =============================================================================
 
 internal object GridLayoutManager {
 
     fun colSpan(size: TileSize): Int = when (size) {
-        TileSize.TINY -> 1; TileSize.SMALL -> 2
-        TileSize.MEDIUM -> 4; TileSize.LARGE -> 4; else -> 2
+        TileSize.TINY   -> 1
+        TileSize.SMALL  -> 2
+        TileSize.MEDIUM -> 4
+        TileSize.LARGE  -> 4
     }
 
     fun rowSpan(size: TileSize): Int = when (size) {
-        TileSize.TINY -> 1; TileSize.SMALL -> 2
-        TileSize.MEDIUM -> 2; TileSize.LARGE -> 4; else -> 2
+        TileSize.TINY   -> 1
+        TileSize.SMALL  -> 2
+        TileSize.MEDIUM -> 2
+        TileSize.LARGE  -> 4
     }
 
     fun buildMetrics(containerWidthPx: Int, paddingPx: Int, spacingPx: Int): GridMetrics? {
@@ -121,10 +158,12 @@ internal object GridLayoutManager {
 
     fun pixelPosition(tile: TileConfig, m: GridMetrics): TilePixelPosition {
         val step = m.cellSizePx + m.spacingPx
-        val cols = colSpan(tile.size); val rows = rowSpan(tile.size)
+        val cols = colSpan(tile.size)
+        val rows = rowSpan(tile.size)
         return TilePixelPosition(
-            x = m.paddingPx + tile.gridX * step, y = tile.gridY * step,
-            width = cols * m.cellSizePx + (cols - 1) * m.spacingPx,
+            x      = m.paddingPx + tile.gridX * step,
+            y      = tile.gridY * step,
+            width  = cols * m.cellSizePx + (cols - 1) * m.spacingPx,
             height = rows * m.cellSizePx + (rows - 1) * m.spacingPx
         )
     }
@@ -137,11 +176,25 @@ internal object GridLayoutManager {
         )
     }
 
-    fun overlaps(x1: Int, y1: Int, w1: Int, h1: Int, x2: Int, y2: Int, w2: Int, h2: Int) =
-        x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2
+    fun clampPosition(col: Int, row: Int, size: TileSize, m: GridMetrics): GridPosition =
+        GridPosition(
+            col = col.coerceIn(0, m.columns - colSpan(size)),
+            row = row.coerceIn(0, m.rows    - rowSpan(size))
+        )
 
-    fun isValid(tile: TileConfig, pos: GridPosition, all: List<TileConfig>, m: GridMetrics): Boolean {
-        val w = colSpan(tile.size); val h = rowSpan(tile.size)
+    fun overlaps(
+        x1: Int, y1: Int, w1: Int, h1: Int,
+        x2: Int, y2: Int, w2: Int, h2: Int
+    ) = x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2
+
+    fun isValid(
+        tile: TileConfig,
+        pos: GridPosition,
+        all: List<TileConfig>,
+        m: GridMetrics
+    ): Boolean {
+        val w = colSpan(tile.size)
+        val h = rowSpan(tile.size)
         if (pos.col < 0 || pos.row < 0 || pos.col + w > m.columns || pos.row + h > m.rows) return false
         return all.none { o ->
             o.id != tile.id && o.gridPosition.isPlaced() &&
@@ -149,53 +202,162 @@ internal object GridLayoutManager {
         }
     }
 
-    fun findFreeSlot(tile: TileConfig, all: List<TileConfig>, m: GridMetrics): GridPosition? {
-        val w = colSpan(tile.size)
-        for (r in 0 until m.rows) for (c in 0..(m.columns - w)) {
-            val pos = GridPosition(c, r)
-            if (isValid(tile, pos, all, m)) return pos
+    fun findFreeSlotNear(
+        tile: TileConfig,
+        preferredRow: Int,
+        preferredCol: Int,
+        all: List<TileConfig>,
+        m: GridMetrics
+    ): GridPosition? {
+        val w      = colSpan(tile.size)
+        val maxCol = m.columns - w
+        if (maxCol < 0) return null
+
+        val colsByProximity = (0..maxCol).sortedBy { abs(it - preferredCol) }
+
+        for (r in preferredRow until m.rows) {
+            for (c in colsByProximity) {
+                val pos = GridPosition(c, r)
+                if (isValid(tile, pos, all, m)) return pos
+            }
+        }
+        for (r in (0 until preferredRow).reversed()) {
+            for (c in colsByProximity) {
+                val pos = GridPosition(c, r)
+                if (isValid(tile, pos, all, m)) return pos
+            }
         }
         return null
+    }
+
+    fun resolveCollisions(
+        anchorId: String,
+        anchorX: Int, anchorY: Int, anchorW: Int, anchorH: Int,
+        working: MutableList<TileConfig>,
+        m: GridMetrics
+    ) {
+        val displaced = working
+            .filter { tile ->
+                tile.id != anchorId &&
+                        tile.gridPosition.isPlaced() &&
+                        overlaps(anchorX, anchorY, anchorW, anchorH,
+                            tile.gridX, tile.gridY, colSpan(tile.size), rowSpan(tile.size))
+            }
+            .sortedBy { abs(it.gridY - anchorY) + abs(it.gridX - anchorX) }
+
+        for (tile in displaced) {
+            val idx = working.indexOfFirst { it.id == tile.id }
+            if (idx == -1) continue
+            working[idx] = tile.copy(gridX = -1, gridY = -1)
+            val pos = findFreeSlotNear(
+                tile         = working[idx],
+                preferredRow = tile.gridY,
+                preferredCol = tile.gridX,
+                all          = working,
+                m            = m
+            )
+            working[idx] = if (pos != null)
+                tile.copy(gridX = pos.col, gridY = pos.row)
+            else
+                tile.copy(gridX = -1, gridY = -1)
+        }
+    }
+
+    fun applyResize(
+        tile: TileConfig,
+        newSize: TileSize,
+        working: MutableList<TileConfig>,
+        m: GridMetrics
+    ): GridPosition {
+        val clamped = clampPosition(tile.gridX, tile.gridY, newSize, m)
+        val resized = tile.copy(size = newSize, gridX = clamped.col, gridY = clamped.row)
+
+        val idx = working.indexOfFirst { it.id == tile.id }
+        if (idx != -1) working[idx] = resized
+
+        resolveCollisions(
+            anchorId = tile.id,
+            anchorX  = clamped.col, anchorY = clamped.row,
+            anchorW  = colSpan(newSize), anchorH = rowSpan(newSize),
+            working  = working, m = m
+        )
+        return clamped
+    }
+
+    fun applyDrag(
+        tile: TileConfig,
+        desiredCol: Int, desiredRow: Int,
+        working: MutableList<TileConfig>,
+        m: GridMetrics
+    ): GridPosition {
+        val clamped = clampPosition(desiredCol, desiredRow, tile.size, m)
+        val moved   = tile.copy(gridX = clamped.col, gridY = clamped.row)
+
+        val idx = working.indexOfFirst { it.id == tile.id }
+        if (idx != -1) working[idx] = moved
+
+        resolveCollisions(
+            anchorId = tile.id,
+            anchorX  = clamped.col, anchorY = clamped.row,
+            anchorW  = colSpan(tile.size), anchorH = rowSpan(tile.size),
+            working  = working, m = m
+        )
+        return clamped
     }
 
     fun contentRows(tiles: List<TileConfig>): Int =
         (tiles.maxOfOrNull { it.gridY + rowSpan(it.size) } ?: 5) + 2
 }
 
+// =============================================================================
+// DASHBOARD PAGE
+// =============================================================================
+
 @Composable
 fun DashboardPage(viewModel: AppViewModel) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val context        = LocalContext.current
+    val scope          = rememberCoroutineScope()
     var launchingTileId by remember { mutableStateOf<String?>(null) }
+    val micaParams      by viewModel.micaParams.collectAsState()
+    val tiles           = viewModel.dashboardTiles.toList()
+    val isDark          = isSystemInDarkTheme()
 
-    val micaParams by viewModel.micaParams.collectAsState()
-    val tiles = viewModel.dashboardTiles.toList()
-    val isDark = isSystemInDarkTheme()
+    LaunchedEffect(isDark) {
+        viewModel.refreshWallpaperVisuals(isDarkOverride = isDark)
+    }
 
     FluentDashboardMotion(isAppLaunching = launchingTileId != null) {
         Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
             DashboardGrid(
-                tiles = tiles,
-                micaParams = micaParams,
-                isDark = isDark,
-                viewModel = viewModel,
+                tiles           = tiles,
+                micaParams      = micaParams,
+                isDark          = isDark,
+                viewModel       = viewModel,
                 launchingTileId = launchingTileId,
-                onTileClick = { tile ->
-                    // GUARD: We only launch an Intent if it's a real APPLICATION
-                    if (tile.type == TileType.APPLICATION && launchingTileId == null && tile.packageName.isSafePackageName()) {
-                        val intent = context.packageManager.getLaunchIntentForPackage(tile.packageName)
-                        if (intent != null) {
-                            launchingTileId = tile.id
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            scope.launch {
-                                delay(LAUNCH_DELAY_MS)
-                                context.startActivity(intent)
-                                delay(LAUNCH_RESET_MS)
-                                launchingTileId = null
+                onTileClick     = { tile ->
+                    when {
+                        tile.type == TileType.PHOTO -> Unit
+
+                        tile.type == TileType.APPLICATION
+                                && launchingTileId == null
+                                && tile.packageName.isSafePackageName() -> {
+                            val intent = context.packageManager
+                                .getLaunchIntentForPackage(tile.packageName)
+                            if (intent != null) {
+                                launchingTileId = tile.id
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                scope.launch {
+                                    delay(LAUNCH_DELAY_MS)
+                                    context.startActivity(intent)
+                                    delay(LAUNCH_RESET_MS)
+                                    launchingTileId = null
+                                }
+                            } else {
+                                Toast.makeText(context, "App not found", Toast.LENGTH_SHORT).show()
                             }
-                        } else {
-                            Toast.makeText(context, "App not found", Toast.LENGTH_SHORT).show()
                         }
+
+                        else -> Unit
                     }
                 }
             )
@@ -203,42 +365,44 @@ fun DashboardPage(viewModel: AppViewModel) {
     }
 }
 
+// =============================================================================
+// DASHBOARD GRID
+// =============================================================================
+
 @Composable
 fun DashboardGrid(
-    tiles: List<TileConfig>,
-    micaParams: MicaParams?,
-    isDark: Boolean,
-    viewModel: AppViewModel,
-    launchingTileId: String? = null,
-    onTileClick: (TileConfig) -> Unit
+    tiles:           List<TileConfig>,
+    micaParams:      MicaParams?,
+    isDark:          Boolean,
+    viewModel:       AppViewModel,
+    launchingTileId: String?  = null,
+    onTileClick:     (TileConfig) -> Unit
 ) {
-    val density = LocalDensity.current
-    val haptics = rememberHaptics()
-    val scope = rememberCoroutineScope()
+    val density  = LocalDensity.current
+    val haptics  = rememberHaptics()
+    val scope    = rememberCoroutineScope()
 
-    var draggingTileId by remember { mutableStateOf<String?>(null) }
-    var draggingTileStartPos by remember { mutableStateOf<TilePixelPosition?>(null) }
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    var targetGridPos by remember { mutableStateOf(GridPosition.UNPLACED) }
-    val isDragging = draggingTileId != null
+    var draggingTileId    by remember { mutableStateOf<String?>(null) }
+    var draggingStartPos  by remember { mutableStateOf<TilePixelPosition?>(null) }
+    var dragOffset        by remember { mutableStateOf(Offset.Zero) }
+    var targetGridPos     by remember { mutableStateOf(GridPosition.UNPLACED) }
+    val isDragging         = draggingTileId != null
 
-    // FIX #11 — autoScrollJob géré via DisposableEffect pour garantir l'annulation même si le
-    // composable quitte la composition pendant un scroll actif (ex : navigation, reconfiguration).
     var autoScrollJob by remember { mutableStateOf<Job?>(null) }
-    DisposableEffect(Unit) {
-        onDispose { autoScrollJob?.cancel() }
-    }
+    DisposableEffect(Unit) { onDispose { autoScrollJob?.cancel() } }
 
     var currentTiles by remember { mutableStateOf(tiles) }
     LaunchedEffect(tiles) { if (!isDragging) currentTiles = tiles }
 
-    var containerWidthPx by remember { mutableIntStateOf(0) }
+    var containerWidthPx  by remember { mutableIntStateOf(0) }
     var containerHeightPx by remember { mutableIntStateOf(0) }
     val hPaddingPx = remember(density) { with(density) { HORIZONTAL_PADDING.roundToPx() } }
-    val spacingPx = remember(density) { with(density) { CELL_SPACING.roundToPx() } }
+    val spacingPx  = remember(density) { with(density) { CELL_SPACING.roundToPx() } }
 
     val gridMetrics by remember(containerWidthPx, hPaddingPx, spacingPx) {
-        derivedStateOf { GridLayoutManager.buildMetrics(containerWidthPx, hPaddingPx, spacingPx) }
+        derivedStateOf {
+            GridLayoutManager.buildMetrics(containerWidthPx, hPaddingPx, spacingPx)
+        }
     }
 
     val tilePositions by remember(currentTiles, gridMetrics) {
@@ -246,7 +410,8 @@ fun DashboardGrid(
             val m = gridMetrics ?: return@derivedStateOf emptyMap<String, TilePixelPosition>()
             buildMap {
                 currentTiles.forEach { tile ->
-                    if (tile.gridPosition.isPlaced()) put(tile.id, GridLayoutManager.pixelPosition(tile, m))
+                    if (tile.gridPosition.isPlaced())
+                        put(tile.id, GridLayoutManager.pixelPosition(tile, m))
                 }
             }
         }
@@ -257,9 +422,16 @@ fun DashboardGrid(
         if (isDragging) return@LaunchedEffect
         val unplaced = currentTiles.filter { !it.gridPosition.isPlaced() }
         if (unplaced.isEmpty()) return@LaunchedEffect
+
         val working = currentTiles.toMutableList()
         unplaced.forEach { tile ->
-            val pos = GridLayoutManager.findFreeSlot(tile, working, m) ?: return@forEach
+            val pos = GridLayoutManager.findFreeSlotNear(
+                tile         = tile,
+                preferredRow = 0,
+                preferredCol = 0,
+                all          = working,
+                m            = m
+            ) ?: return@forEach
             val idx = working.indexOfFirst { it.id == tile.id }
             if (idx != -1) working[idx] = tile.copy(gridX = pos.col, gridY = pos.row)
         }
@@ -267,8 +439,6 @@ fun DashboardGrid(
         viewModel.updateTilesOrder(working)
     }
 
-    // FIX #7 — contentHeightPx : garde un minimum de 300px pour éviter l'effondrement du container
-    // quand gridMetrics est null (première frame avant onSizeChanged).
     val contentHeightPx by remember(currentTiles, gridMetrics) {
         derivedStateOf {
             val m = gridMetrics ?: return@derivedStateOf 300
@@ -292,52 +462,15 @@ fun DashboardGrid(
                 .height(with(density) { contentHeightPx.toDp() } + 100.dp)
         ) {
 
-            // ─── GHOST BOX ────────────────────────────────────────────────────
-            // FIX #5 — Le ghost utilise désormais un seul bloc graphicsLayer pour synchroniser
-            // X, Y, width, height dans la même passe de dessin → plus de décalage d'un frame.
-            val m = gridMetrics
-            if (isDragging && targetGridPos.isPlaced() && m != null) {
-                val draggedTile = currentTiles.find { it.id == draggingTileId }
-                if (draggedTile != null) {
-                    val ghostPos by remember(draggedTile, targetGridPos, m) {
-                        derivedStateOf {
-                            GridLayoutManager.pixelPosition(
-                                draggedTile.copy(gridX = targetGridPos.col, gridY = targetGridPos.row), m
-                            )
-                        }
-                    }
-
-                    val animGhostX by animateFloatAsState(
-                        targetValue = ghostPos.x.toFloat(),
-                        animationSpec = FluentMotion.standardSpec(), label = "ghost_x"
-                    )
-                    val animGhostY by animateFloatAsState(
-                        targetValue = ghostPos.y.toFloat(),
-                        animationSpec = FluentMotion.standardSpec(), label = "ghost_y"
-                    )
-                    val animGhostW by animateFloatAsState(
-                        targetValue = ghostPos.width.toFloat(),
-                        animationSpec = FluentMotion.standardSpec(), label = "ghost_w"
-                    )
-                    val animGhostH by animateFloatAsState(
-                        targetValue = ghostPos.height.toFloat(),
-                        animationSpec = FluentMotion.standardSpec(), label = "ghost_h"
-                    )
-
-                    // Tout se passe dans un seul graphicsLayer → rendu atomique, zéro décalage.
-                    Box(
-                        modifier = Modifier
-                            .graphicsLayer {
-                                translationX = animGhostX
-                                translationY = animGhostY
-                            }
-                            .size(
-                                with(density) { animGhostW.toDp() },
-                                with(density) { animGhostH.toDp() }
-                            )
-                            .background(Color.White.copy(0.15f), RoundedCornerShape(TILE_CORNER_RADIUS))
-                            .border(2.dp, Color.White.copy(0.8f), RoundedCornerShape(TILE_CORNER_RADIUS))
-                    )
+            val newlyPinnedIds = remember { mutableStateOf(emptySet<String>()) }
+            LaunchedEffect(currentTiles) {
+                val currentIds  = currentTiles.map { it.id }.toSet()
+                val previousIds = newlyPinnedIds.value
+                val added = if (previousIds.isEmpty()) emptySet() else currentIds - previousIds
+                newlyPinnedIds.value = currentIds
+                if (added.isNotEmpty()) {
+                    delay(800)
+                    newlyPinnedIds.value = currentIds - added
                 }
             }
 
@@ -345,137 +478,115 @@ fun DashboardGrid(
                 val tilePos = tilePositions[tile.id] ?: return@forEach
                 key(tile.id) {
                     DashboardTile(
-                        tile = tile,
-                        tilePos = tilePos,
-                        dragStartPos = if (tile.id == draggingTileId) draggingTileStartPos else null,
-                        isDragging = tile.id == draggingTileId,
-                        isLaunching = launchingTileId == tile.id,
+                        tile              = tile,
+                        tilePos           = tilePos,
+                        isNewlyPinned     = tile.id in (newlyPinnedIds.value),
+                        dragStartPos      = if (tile.id == draggingTileId) draggingStartPos else null,
+                        isDragging        = tile.id == draggingTileId,
+                        isLaunching       = launchingTileId == tile.id,
                         dragOffsetProvider = { dragOffset },
-                        micaParams = micaParams, isDark = isDark, viewModel = viewModel,
-                        onTap = { if (!isDragging) onTileClick(tile) },
+                        micaParams        = micaParams,
+                        isDark            = isDark,
+                        viewModel         = viewModel,
+                        onTap             = { if (!isDragging) onTileClick(tile) },
+
                         onResizeTile = { newSize ->
-                            haptics.performTick()
                             val metrics = gridMetrics ?: return@DashboardTile
-                            val updatedTile = tile.copy(size = newSize)
-                            val w1 = GridLayoutManager.colSpan(newSize)
-                            val h1 = GridLayoutManager.rowSpan(newSize)
-                            val workingList = currentTiles.toMutableList()
-
-                            val tIdx = workingList.indexOfFirst { it.id == tile.id }
-                            if (tIdx != -1) workingList[tIdx] = updatedTile
-
-                            for (i in workingList.indices) {
-                                val other = workingList[i]
-                                if (other.id != tile.id && other.gridPosition.isPlaced()) {
-                                    val w2 = GridLayoutManager.colSpan(other.size)
-                                    val h2 = GridLayoutManager.rowSpan(other.size)
-                                    if (GridLayoutManager.overlaps(updatedTile.gridX, updatedTile.gridY, w1, h1, other.gridX, other.gridY, w2, h2)) {
-                                        workingList[i] = other.copy(gridX = -1, gridY = -1)
-                                    }
-                                }
-                            }
-                            for (i in workingList.indices) {
-                                val other = workingList[i]
-                                if (!other.gridPosition.isPlaced()) {
-                                    val pos = GridLayoutManager.findFreeSlot(other, workingList, metrics)
-                                    if (pos != null) workingList[i] = other.copy(gridX = pos.col, gridY = pos.row)
-                                }
-                            }
-
-                            currentTiles = workingList
-                            viewModel.updateTilesOrder(workingList)
+                            haptics.performTick()
+                            val working = currentTiles.toMutableList()
+                            GridLayoutManager.applyResize(tile, newSize, working, metrics)
+                            currentTiles = working
+                            viewModel.updateTilesOrder(working)
                             viewModel.resizeTile(tile.id, newSize)
                         },
+
                         onUnpinTile = {
-                            val newTilesList = currentTiles.filter { it.id != tile.id }
-                            currentTiles = newTilesList
-                            viewModel.updateTilesOrder(newTilesList)
+                            val updated = currentTiles.filter { it.id != tile.id }
+                            currentTiles = updated
+                            viewModel.updateTilesOrder(updated)
+                            viewModel.unpinTile(tile.id)
                         },
+
                         onDragStart = {
-                            draggingTileId = tile.id
-                            dragOffset = Offset.Zero
-                            draggingTileStartPos = tilePositions[tile.id]
-                            targetGridPos = GridPosition(tile.gridX, tile.gridY)
+                            draggingTileId   = tile.id
+                            dragOffset       = Offset.Zero
+                            draggingStartPos = tilePositions[tile.id]
+                            targetGridPos    = GridPosition(tile.gridX, tile.gridY)
                             haptics.performLongPress()
                         },
+
                         onDrag = { dragAmount ->
                             dragOffset += dragAmount
                             val metrics = gridMetrics ?: return@DashboardTile
-                            val startPx = draggingTileStartPos ?: return@DashboardTile
+                            val startPx = draggingStartPos ?: return@DashboardTile
+                            val w       = GridLayoutManager.colSpan(tile.size)
+                            val h       = GridLayoutManager.rowSpan(tile.size)
 
-                            val topX = startPx.x + dragOffset.x
-                            val topY = startPx.y + dragOffset.y
-
-                            val w1 = GridLayoutManager.colSpan(tile.size)
-                            val h1 = GridLayoutManager.rowSpan(tile.size)
-                            val raw = GridLayoutManager.pixelToGrid(topX, topY, metrics)
-                            val clamped = GridPosition(
-                                raw.col.coerceIn(0, metrics.columns - w1),
-                                raw.row.coerceIn(0, metrics.rows - h1)
+                            val raw = GridLayoutManager.pixelToGrid(
+                                pxX = startPx.x + dragOffset.x,
+                                pxY = startPx.y + dragOffset.y,
+                                m   = metrics
                             )
-
+                            val clamped = GridPosition(
+                                col = raw.col.coerceIn(0, metrics.columns - w),
+                                row = raw.row.coerceIn(0, metrics.rows    - h)
+                            )
                             if (clamped != targetGridPos) {
                                 targetGridPos = clamped
                                 haptics.performTick()
-
-                                val updatedTile = tile.copy(gridX = clamped.col, gridY = clamped.row)
-                                val workingList = currentTiles.toMutableList()
-
-                                val tIdx = workingList.indexOfFirst { it.id == tile.id }
-                                if (tIdx != -1) workingList[tIdx] = updatedTile
-
-                                for (i in workingList.indices) {
-                                    val other = workingList[i]
-                                    if (other.id != tile.id && other.gridPosition.isPlaced()) {
-                                        val w2 = GridLayoutManager.colSpan(other.size)
-                                        val h2 = GridLayoutManager.rowSpan(other.size)
-                                        if (GridLayoutManager.overlaps(clamped.col, clamped.row, w1, h1, other.gridX, other.gridY, w2, h2)) {
-                                            workingList[i] = other.copy(gridX = -1, gridY = -1)
-                                        }
-                                    }
-                                }
-                                for (i in workingList.indices) {
-                                    val other = workingList[i]
-                                    if (!other.gridPosition.isPlaced()) {
-                                        val pos = GridLayoutManager.findFreeSlot(other, workingList, metrics)
-                                        if (pos != null) workingList[i] = other.copy(gridX = pos.col, gridY = pos.row)
-                                    }
-                                }
-                                currentTiles = workingList
                             }
 
-                            val visualTopY = startPx.y + dragOffset.y - scrollState.value
-                            val visualBottomY = visualTopY + startPx.height
+                            val visualTop    = startPx.y + dragOffset.y - scrollState.value
+                            val visualBottom = visualTop + startPx.height
                             val scrollDir = when {
-                                visualTopY < SCROLL_TRIGGER_ZONE_PX && scrollState.value > 0 -> -1f
-                                visualBottomY > containerHeightPx - SCROLL_TRIGGER_ZONE_PX
-                                        && scrollState.value < scrollState.maxValue -> 1f
-                                else -> 0f
+                                visualTop    < SCROLL_TRIGGER_PX && scrollState.value > 0       -> -1f
+                                visualBottom > containerHeightPx - SCROLL_TRIGGER_PX
+                                        && scrollState.value < scrollState.maxValue             ->  1f
+                                else                                                             ->  0f
                             }
                             if (scrollDir == 0f) {
                                 autoScrollJob?.cancel(); autoScrollJob = null
                             } else if (autoScrollJob?.isActive != true) {
                                 autoScrollJob = scope.launch {
-                                    while (true) { scrollState.scrollBy(scrollDir * SCROLL_STEP_PX); delay(16) }
+                                    while (true) {
+                                        scrollState.scrollBy(scrollDir * SCROLL_STEP_PX)
+                                        delay(16)
+                                    }
                                 }
                             }
                         },
+
                         onDragEnd = {
                             autoScrollJob?.cancel(); autoScrollJob = null
-                            viewModel.updateTilesOrder(currentTiles)
-                            draggingTileId = null
-                            dragOffset = Offset.Zero
-                            targetGridPos = GridPosition.UNPLACED
-                            draggingTileStartPos = null
+                            val metrics = gridMetrics
+                            if (metrics != null && targetGridPos.isPlaced()) {
+                                val working = currentTiles.toMutableList()
+                                GridLayoutManager.applyDrag(
+                                    tile       = tile,
+                                    desiredCol = targetGridPos.col,
+                                    desiredRow = targetGridPos.row,
+                                    working    = working,
+                                    m          = metrics
+                                )
+                                currentTiles = working
+                                viewModel.updateTilesOrder(working)
+                            } else {
+                                viewModel.updateTilesOrder(currentTiles)
+                            }
+                            draggingTileId   = null
+                            dragOffset       = Offset.Zero
+                            targetGridPos    = GridPosition.UNPLACED
+                            draggingStartPos = null
                             haptics.performRelease()
                         },
+
                         onDragCancel = {
                             autoScrollJob?.cancel(); autoScrollJob = null
-                            currentTiles = tiles
-                            draggingTileId = null
-                            dragOffset = Offset.Zero
-                            targetGridPos = GridPosition.UNPLACED
-                            draggingTileStartPos = null
+                            currentTiles     = tiles
+                            draggingTileId   = null
+                            dragOffset       = Offset.Zero
+                            targetGridPos    = GridPosition.UNPLACED
+                            draggingStartPos = null
                             haptics.performRelease()
                         }
                     )
@@ -485,165 +596,242 @@ fun DashboardGrid(
     }
 }
 
+// =============================================================================
+// MENU COMPONENTS
+// =============================================================================
+
+@Composable
+private fun FluentAnimatedMenuItem(
+    text: String,
+    icon: ImageVector,
+    color: Color,
+    onClick: () -> Unit
+) {
+    val haptics = rememberHaptics()
+    var isPressed by remember { mutableStateOf(false) }
+
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.94f else 1f,
+        animationSpec = tween(150),
+        label = "menuItemScale"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        haptics.performTick()
+                        tryAwaitRelease()
+                        isPressed = false
+                    },
+                    onTap = { onClick() }
+                )
+            }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(text = text, color = color, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun FluentResizeRow(
+    currentSize: TileSize,
+    color: Color,
+    onResize: (TileSize) -> Unit
+) {
+    val haptics = rememberHaptics()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val sizes = listOf(
+            TileSize.TINY to "1×1",
+            TileSize.SMALL to "2×2",
+            TileSize.MEDIUM to "4×2",
+            TileSize.LARGE to "4×4"
+        )
+
+        sizes.forEach { (size, label) ->
+            val isSelected = size == currentSize
+            val bgColor by animateColorAsState(if (isSelected) color.copy(alpha = 0.15f) else Color.Transparent, label = "bg")
+            val borderColor = if (isSelected) color.copy(alpha = 0.3f) else color.copy(alpha = 0.1f)
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(bgColor)
+                    .border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                    .clickable {
+                        haptics.performTick()
+                        onResize(size)
+                    }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    color = color,
+                    fontSize = 12.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+// =============================================================================
+// DASHBOARD TILE
+// =============================================================================
+
 @Composable
 private fun DashboardTile(
-    tile: TileConfig,
-    tilePos: TilePixelPosition,
-    dragStartPos: TilePixelPosition?,
-    isDragging: Boolean,
-    isLaunching: Boolean,
+    tile:              TileConfig,
+    tilePos:           TilePixelPosition,
+    isNewlyPinned:     Boolean = false,
+    dragStartPos:      TilePixelPosition?,
+    isDragging:        Boolean,
+    isLaunching:       Boolean,
     dragOffsetProvider: () -> Offset,
-    micaParams: MicaParams?,
-    isDark: Boolean,
-    viewModel: AppViewModel,
-    onTap: () -> Unit,
-    onResizeTile: (TileSize) -> Unit,
-    onUnpinTile: () -> Unit,
-    onDragStart: () -> Unit,
-    onDrag: (dragAmount: Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit
+    micaParams:        MicaParams?,
+    isDark:            Boolean,
+    viewModel:         AppViewModel,
+    onTap:             () -> Unit,
+    onResizeTile:      (TileSize) -> Unit,
+    onUnpinTile:       () -> Unit,
+    onDragStart:       () -> Unit,
+    onDrag:            (Offset) -> Unit,
+    onDragEnd:         () -> Unit,
+    onDragCancel:      () -> Unit
 ) {
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
+    val context  = LocalContext.current
+    val density  = LocalDensity.current
+    val scope    = rememberCoroutineScope()
+    val haptics  = rememberHaptics()
 
-    val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnResizeTile by rememberUpdatedState(onResizeTile)
-    val currentOnUnpinTile by rememberUpdatedState(onUnpinTile)
-    val currentOnDragStart by rememberUpdatedState(onDragStart)
-    val currentOnDrag by rememberUpdatedState(onDrag)
-    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
-    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
-    val currentDragStartPos by rememberUpdatedState(dragStartPos)
+    val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState(initial = true)
 
-    var isPressed by remember { mutableStateOf(false) }
-    var dropPosition by remember { mutableStateOf<Offset?>(null) }
-    var dragDistance by remember { mutableFloatStateOf(0f) }
-    var showContextMenu by remember { mutableStateOf(false) }
-    var isUnpinning by remember { mutableStateOf(false) }
+    val currentOnTap         by rememberUpdatedState(onTap)
+    val currentOnResizeTile  by rememberUpdatedState(onResizeTile)
+    val currentOnUnpinTile   by rememberUpdatedState(onUnpinTile)
+    val currentOnDragStart   by rememberUpdatedState(onDragStart)
+    val currentOnDrag        by rememberUpdatedState(onDrag)
+    val currentOnDragEnd     by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel  by rememberUpdatedState(onDragCancel)
+    val currentDragStartPos  by rememberUpdatedState(dragStartPos)
 
-    // FIX #4 — isAppearing démarre à true seulement pour les nouvelles tuiles.
-    // On passe à false dès le premier frame rendu pour éviter l'animation d'entrée
-    // sur les tuiles déjà présentes au lancement de l'écran.
-    // La frame-skip via `withFrameNanos` garantit que la valeur initiale (0.85f / 0f)
-    // est bien dessinée avant de transitionner vers l'état final.
-    var isAppearing by remember { mutableStateOf(true) }
-    LaunchedEffect(tile.id) {
-        // Attendre exactement une frame pour que l'état initial soit rendu
-        withFrameNanos {}
-        isAppearing = false
+    var isPressed      by remember { mutableStateOf(false) }
+    var dropPosition   by remember { mutableStateOf<Offset?>(null) }
+    var dragDistance   by remember { mutableFloatStateOf(0f) }
+    var showMenu       by remember { mutableStateOf(false) }
+    var isUnpinning    by remember { mutableStateOf(false) }
+
+    var isAppearing by remember { mutableStateOf(isNewlyPinned) }
+    LaunchedEffect(isNewlyPinned) {
+        if (isNewlyPinned) {
+            withFrameNanos {}
+            isAppearing = false
+        }
     }
 
-    val animWidth by animateDpAsState(
-        targetValue = with(density) { tilePos.width.toDp() },
-        animationSpec = FluentMotion.standardSpec(),
-        label = "width_${tile.id}"
-    )
-    val animHeight by animateDpAsState(
-        targetValue = with(density) { tilePos.height.toDp() },
-        animationSpec = FluentMotion.standardSpec(),
-        label = "height_${tile.id}"
-    )
+    val animWidth  by animateDpAsState(with(density) { tilePos.width.toDp()  }, FluentMotion.standardSpec(), "w_${tile.id}")
+    val animHeight by animateDpAsState(with(density) { tilePos.height.toDp() }, FluentMotion.standardSpec(), "h_${tile.id}")
 
-    // FIX #1 — animOffset : on snap immédiatement à la position initiale à la première composition
-    // pour éviter le "téléport" depuis Offset(0,0) vers la vraie position.
     val animOffset = remember(tile.id) {
         Animatable(Offset(tilePos.x.toFloat(), tilePos.y.toFloat()), Offset.VectorConverter)
     }
-
-    // FIX #9 — snapshotFlow ne peut tracker QUE des objets Compose State.
-    // tilePos et isDragging sont des paramètres ordinaires → snapshotFlow ne les voit pas changer.
-    // On les wrappe avec rememberUpdatedState pour obtenir un State<T> observable,
-    // ce qui permet au flow de se déclencher à chaque changement de position sans recréer
-    // le LaunchedEffect (et donc sans relancer toutes les tuiles à chaque frame de drag).
-    val currentTilePos by rememberUpdatedState(tilePos)
+    val currentTilePos    by rememberUpdatedState(tilePos)
     val currentIsDragging by rememberUpdatedState(isDragging)
 
     LaunchedEffect(tile.id) {
-        // Snap initial synchrone : couvre le cas où tilePos change avant la 1ère composition
         animOffset.snapTo(Offset(currentTilePos.x.toFloat(), currentTilePos.y.toFloat()))
         snapshotFlow { Triple(currentTilePos.x, currentTilePos.y, currentIsDragging) }
             .collect { (x, y, dragging) ->
                 if (!dragging) {
-                    // FIX #3 — Snap vers dropPosition d'abord, puis animation vers la grille
                     dropPosition?.let { pos -> animOffset.snapTo(pos); dropPosition = null }
-                    // FIX #8 — Guard : pas d'animation inutile si déjà à destination
                     val target = Offset(x.toFloat(), y.toFloat())
-                    if (animOffset.value != target) {
+                    if (animOffset.value != target)
                         animOffset.animateTo(target, FluentMotion.standardSpec())
-                    }
                 }
             }
+    }
+
+    LaunchedEffect(isDragging) {
+        if (isDragging) {
+            animOffset.stop()
+            animOffset.snapTo(Offset(currentTilePos.x.toFloat(), currentTilePos.y.toFloat()))
+        }
     }
 
     val lifecycleScale by animateFloatAsState(
         targetValue = when {
-            isAppearing -> 0.85f
+            isAppearing -> 0.70f
             isUnpinning -> 0.85f
-            isDragging -> 1.05f
-            else -> 1f
+            isDragging  -> 1.05f
+            else        -> 1f
         },
         animationSpec = when {
             isAppearing -> FluentMotion.enterSpec()
             isUnpinning -> FluentMotion.exitSpec()
-            else -> FluentMotion.standardSpec()
+            else        -> FluentMotion.standardSpec()
         },
-        label = "lifecycle_scale_${tile.id}"
+        label = "scale_${tile.id}"
     )
-
     val animAlpha by animateFloatAsState(
         targetValue = when {
             isAppearing -> 0f
             isUnpinning -> 0f
-            isDragging -> 0.85f
-            else -> 1f
+            isDragging  -> 0.85f
+            else        -> 1f
         },
         animationSpec = when {
             isAppearing -> FluentMotion.enterSpec()
             isUnpinning -> FluentMotion.exitSpec()
-            else -> FluentMotion.standardSpec()
+            else        -> FluentMotion.standardSpec()
         },
         label = "alpha_${tile.id}"
     )
-
-    // FIX #2 — zIndex animé pour éviter le hard-jump visuel 0→100.
-    // La tuile draguée / avec menu contextuel monte progressivement au premier plan.
     val animZIndex by animateFloatAsState(
-        targetValue = if (isDragging || showContextMenu) 100f else 0f,
+        targetValue   = if (isDragging || showMenu) 100f else 0f,
         animationSpec = FluentMotion.standardSpec(),
-        label = "zIndex_${tile.id}"
+        label         = "z_${tile.id}"
     )
 
-    // ─── ACTIONS SYSTÈME ──────────────────────────────────────────────────────
-
     fun openAppSettings() {
-        // FIX #12 — Validation stricte du package name avant de construire l'URI
-        if (tile.packageName.isSafePackageName()) {
-            try {
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        if (!tile.packageName.isSafePackageName()) return
+        try {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", tile.packageName, null)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                context.startActivity(intent)
-            } catch (e: ActivityNotFoundException) {
-                Toast.makeText(context, "Impossible d'ouvrir les paramètres", Toast.LENGTH_SHORT).show()
-            }
+            )
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, "Impossible d'ouvrir les paramètres", Toast.LENGTH_SHORT).show()
         }
     }
 
     fun uninstallApp() {
-        // FIX #12 — Validation stricte du package name + Uri.fromParts au lieu de Uri.parse
-        if (tile.packageName.isSafePackageName()) {
-            try {
-                val intent = Intent(Intent.ACTION_DELETE).apply {
+        if (!tile.packageName.isSafePackageName()) return
+        try {
+            context.startActivity(
+                Intent(Intent.ACTION_DELETE).apply {
                     data = Uri.fromParts("package", tile.packageName, null)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                context.startActivity(intent)
-            } catch (e: ActivityNotFoundException) {
-                Toast.makeText(context, "Impossible de désinstaller", Toast.LENGTH_SHORT).show()
-            }
+            )
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, "Impossible de désinstaller", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -651,111 +839,98 @@ private fun DashboardTile(
         modifier = Modifier
             .size(animWidth, animHeight)
             .graphicsLayer {
-                // FIX #6 — Safe access : on ne lit currentDragStartPos qu'une seule fois
-                // dans un let, ce qui élimine le !! et la race condition associée.
-                val currentOffset = dragOffsetProvider()
                 val startPos = currentDragStartPos
-                val pos = if (isDragging && startPos != null)
-                    Offset(startPos.x + currentOffset.x, startPos.y + currentOffset.y)
-                else
+                val pos = if (isDragging && startPos != null) {
+                    val off = dragOffsetProvider()
+                    Offset(startPos.x + off.x, startPos.y + off.y)
+                } else {
                     animOffset.value
-
+                }
                 translationX = pos.x
                 translationY = pos.y
-                scaleX = lifecycleScale
-                scaleY = lifecycleScale
-                alpha = animAlpha
-                this.clip = false
+                scaleX       = lifecycleScale
+                scaleY       = lifecycleScale
+                alpha        = animAlpha
+                clip         = false
             }
-            .zIndex(animZIndex) // FIX #2 — zIndex animé
+            .zIndex(animZIndex)
     ) {
         FluentTile(
-            modifier = Modifier.fillMaxSize(),
-            isPressed = isPressed && !isDragging,
-            isDragging = isDragging,
-            isLaunching = isLaunching,
-            dragProgress = 0f,
-            cornerRadius = TILE_CORNER_RADIUS
+            modifier      = Modifier.fillMaxSize(),
+            isPressed     = isPressed && !isDragging,
+            isDragging    = isDragging,
+            isLaunching   = isLaunching,
+            dragProgress  = 0f,
+            cornerRadius  = TILE_CORNER_RADIUS
         ) {
-            val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
             MicaTile(
-                config = tile, mica = micaParams, isDark = isDark,
+                config    = tile,
+                mica      = micaParams,
+                isDark    = isDark,
                 viewModel = viewModel,
-                modifier = Modifier
+                modifier  = Modifier
                     .fillMaxSize()
                     .pointerInput(tile.id, "tap") {
-                        detectTapGestures(
-                            onPress = {
-                                if (!isUnpinning && !isAppearing) {
-                                    isPressed = true
-                                    try { tryAwaitRelease() } finally { isPressed = false }
-                                }
-                            },
-                            onTap = {
-                                if (!showContextMenu && !isUnpinning) currentOnTap()
-                            },
-                            onDoubleTap = {
-                                if (!showContextMenu && !isUnpinning) {
-                                    val next = when (tile.size) {
-                                        TileSize.TINY   -> TileSize.SMALL
-                                        TileSize.SMALL  -> TileSize.MEDIUM
-                                        TileSize.MEDIUM -> TileSize.LARGE
-                                        TileSize.LARGE  -> TileSize.TINY
-                                        else            -> TileSize.SMALL
+                        if (tile.type != TileType.PHOTO) {
+                            detectTapGestures(
+                                onPress = {
+                                    if (!isUnpinning && !isAppearing) {
+                                        isPressed = true
+                                        try { tryAwaitRelease() } finally { isPressed = false }
                                     }
-                                    currentOnResizeTile(next)
+                                },
+                                onTap = {
+                                    if (!showMenu && !isUnpinning) currentOnTap()
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                     .pointerInput(tile.id, "drag") {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 if (!isUnpinning && !isAppearing) {
                                     dragDistance = 0f
-                                    currentOnDragStart()
+                                    showMenu     = false
                                 }
                             },
-                            onDrag = { change, dragAmount ->
+                            onDrag = { change, amount ->
                                 if (!isUnpinning) {
-                                    dragDistance += dragAmount.getDistance()
-                                    if (dragDistance > DRAG_THRESHOLD_PX && showContextMenu)
-                                        showContextMenu = false
+                                    val wasIdle = dragDistance < DRAG_THRESHOLD_PX
+                                    dragDistance += amount.getDistance()
+                                    if (wasIdle && dragDistance >= DRAG_THRESHOLD_PX) {
+                                        currentOnDragStart()
+                                    }
                                     change.consume()
-                                    currentOnDrag(dragAmount)
+                                    if (dragDistance >= DRAG_THRESHOLD_PX) {
+                                        currentOnDrag(amount)
+                                    }
                                 }
                             },
                             onDragEnd = {
                                 if (!isUnpinning) {
-                                    if (dragDistance > DRAG_THRESHOLD_PX) {
-                                        // FIX #6 — Safe let : on évite le !! sur currentDragStartPos
+                                    if (dragDistance >= DRAG_THRESHOLD_PX) {
                                         currentDragStartPos?.let { start ->
-                                            val currentOffset = dragOffsetProvider()
-                                            dropPosition = Offset(
-                                                start.x + currentOffset.x,
-                                                start.y + currentOffset.y
-                                            )
+                                            val off = dragOffsetProvider()
+                                            dropPosition = Offset(start.x + off.x, start.y + off.y)
                                         }
                                         currentOnDragEnd()
                                     } else {
-                                        showContextMenu = true
-                                        currentOnDragCancel()
+                                        haptics.performLongPress()
+                                        showMenu = true
                                     }
                                     dragDistance = 0f
                                 }
                             },
                             onDragCancel = {
                                 if (!isUnpinning) {
-                                    dragDistance = 0f
-                                    // FIX #6 — Safe let
-                                    currentDragStartPos?.let { start ->
-                                        val currentOffset = dragOffsetProvider()
-                                        dropPosition = Offset(
-                                            start.x + currentOffset.x,
-                                            start.y + currentOffset.y
-                                        )
+                                    if (dragDistance >= DRAG_THRESHOLD_PX) {
+                                        currentDragStartPos?.let { start ->
+                                            val off = dragOffsetProvider()
+                                            dropPosition = Offset(start.x + off.x, start.y + off.y)
+                                        }
+                                        currentOnDragCancel()
                                     }
-                                    currentOnDragCancel()
+                                    dragDistance = 0f
                                 }
                             }
                         )
@@ -765,83 +940,98 @@ private fun DashboardTile(
             )
         }
 
+        // ── Context menu ──────────────────────────────────────────────────────
+        val menuShape         = RoundedCornerShape(12.dp)
+        val solidWindowsColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFAFAFA)
+        val borderColor       = if (isDark) Color.White.copy(0.12f) else Color.Black.copy(0.08f)
+
         DropdownMenu(
-            expanded = showContextMenu,
-            onDismissRequest = { showContextMenu = false },
-            shape = RoundedCornerShape(8.dp),
-            containerColor = if (isDark) Color(0xFF202020) else Color(0xFFF3F3F3),
-            shadowElevation = 12.dp, tonalElevation = 0.dp,
-            modifier = Modifier
-                .width(220.dp)
-                .border(
-                    0.5.dp,
-                    if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.1f),
-                    RoundedCornerShape(8.dp)
+            expanded         = showMenu,
+            onDismissRequest = { showMenu = false },
+            offset           = DpOffset(0.dp, (-20).dp),
+            shape            = menuShape,
+            containerColor   = Color.Transparent,
+            shadowElevation  = 0.dp,
+            tonalElevation   = 0.dp,
+            modifier         = Modifier
+                .width(240.dp)
+                .then(
+                    if (isTransparencyEnabled) {
+                        Modifier.fluentMicaComplex(
+                            micaParams = micaParams,
+                            enabled    = true,
+                            elevation  = 0.dp,
+                            shape      = menuShape
+                        )
+                    } else {
+                        Modifier.background(solidWindowsColor, menuShape)
+                    }
                 )
+                .border(1.dp, borderColor, menuShape)
         ) {
             Column(modifier = Modifier.animateContentSize(FluentMotion.standardSpec())) {
                 val textColor = if (isDark) Color.White else Color.Black
 
-                DropdownMenuItem(
-                    text = { Text("Désépingler", color = textColor, fontSize = 14.sp) },
-                    leadingIcon = { Icon(FluentIcons.Regular.PinOff, null, tint = textColor, modifier = Modifier.size(20.dp)) },
+                FluentAnimatedMenuItem(
+                    text  = "Désépingler",
+                    icon  = FluentIcons.Regular.PinOff,
+                    color = textColor,
                     onClick = {
-                        showContextMenu = false
+                        showMenu    = false
                         isUnpinning = true
-                        scope.launch {
-                            delay(150)
-                            currentOnUnpinTile()
-                        }
+                        scope.launch { delay(150); currentOnUnpinTile() }
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text("Tuile dynamique", color = textColor, fontSize = 14.sp) },
-                    leadingIcon = { Icon(FluentIcons.Regular.StarEmphasis, null, tint = textColor, modifier = Modifier.size(20.dp)) },
-                    onClick = { showContextMenu = false }
-                )
 
-                // FIX #12 — On n'affiche les options système que si le package name est valide
-                if (tile.packageName.isSafePackageName()) {
-                    DropdownMenuItem(
-                        text = { Text("Infos sur l'application", color = textColor, fontSize = 14.sp) },
-                        leadingIcon = { Icon(FluentIcons.Regular.Info, null, tint = textColor, modifier = Modifier.size(20.dp)) },
+                // Live Tile — uniquement si un widget dynamique existe
+                if (tile.hasDynamicContent()) {
+                    FluentAnimatedMenuItem(
+                        text  = if (tile.isDynamic) "Désactiver la tuile dynamique"
+                        else "Activer la tuile dynamique",
+                        icon  = FluentIcons.Regular.StarEmphasis,
+                        color = textColor,
                         onClick = {
-                            showContextMenu = false
-                            openAppSettings()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Désinstaller", color = Color(0xFFE53935), fontSize = 14.sp) },
-                        leadingIcon = { Icon(FluentIcons.Regular.Delete, null, tint = Color(0xFFE53935), modifier = Modifier.size(20.dp)) },
-                        onClick = {
-                            showContextMenu = false
-                            uninstallApp()
+                            showMenu = false
+                            viewModel.toggleDynamicState(tile.id)
                         }
                     )
                 }
 
-                HorizontalDivider(color = textColor.copy(0.1f), modifier = Modifier.padding(vertical = 4.dp))
+                if (tile.packageName.isSafePackageName()) {
+                    FluentAnimatedMenuItem(
+                        text  = "Infos sur l'application",
+                        icon  = FluentIcons.Regular.Info,
+                        color = textColor,
+                        onClick = { showMenu = false; openAppSettings() }
+                    )
+                    FluentAnimatedMenuItem(
+                        text  = "Désinstaller",
+                        icon  = FluentIcons.Regular.Delete,
+                        color = Color(0xFFE53935),
+                        onClick = { showMenu = false; uninstallApp() }
+                    )
+                }
+
+                HorizontalDivider(
+                    color    = textColor.copy(0.1f),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
 
                 Text(
-                    "Redimensionner", color = textColor.copy(0.5f), fontSize = 11.sp,
+                    text       = "Redimensionner",
+                    color      = textColor.copy(0.5f),
+                    fontSize   = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    modifier   = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
-                DropdownMenuItem(
-                    text = { Text("Petite (1x1)", color = textColor, fontSize = 14.sp) },
-                    onClick = { showContextMenu = false; currentOnResizeTile(TileSize.TINY) }
-                )
-                DropdownMenuItem(
-                    text = { Text("Moyenne (2x2)", color = textColor, fontSize = 14.sp) },
-                    onClick = { showContextMenu = false; currentOnResizeTile(TileSize.SMALL) }
-                )
-                DropdownMenuItem(
-                    text = { Text("Large (4x2)", color = textColor, fontSize = 14.sp) },
-                    onClick = { showContextMenu = false; currentOnResizeTile(TileSize.MEDIUM) }
-                )
-                DropdownMenuItem(
-                    text = { Text("Grand (4x4)", color = textColor, fontSize = 14.sp) },
-                    onClick = { showContextMenu = false; currentOnResizeTile(TileSize.LARGE) }
+
+                FluentResizeRow(
+                    currentSize = tile.size,
+                    color       = textColor,
+                    onResize    = { newSize ->
+                        showMenu = false
+                        currentOnResizeTile(newSize)
+                    }
                 )
             }
         }

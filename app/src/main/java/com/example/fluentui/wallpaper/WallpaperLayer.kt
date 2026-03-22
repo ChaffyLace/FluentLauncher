@@ -1,15 +1,5 @@
 package com.example.fluentui.wallpaper
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
-import android.graphics.Matrix
-import android.graphics.RenderEffect
-import android.graphics.Shader
-import android.media.ExifInterface
-import android.net.Uri
-import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -22,92 +12,66 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import com.example.fluentui.ui.settings.SettingsState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.File
-import kotlin.math.min
+
+// ==============================================================================
+// WallpaperLayer v2
+//
+// Ce composable ne fait plus QUE du rendu.
+// Tout le travail lourd (I/O, calcul de flou) est délégué au WallpaperRepository.
+//
+// Résultat :
+//   • Aucun freeze au changement de thème dark/light (le repository n'est pas
+//     invalidé par isDark, seul wallpaperType/wallpaperValue le sont).
+//   • Aucun GPU saturé : l'image floutée est un Bitmap pré-calculé, affiché
+//     comme une Image normale — pas de RenderEffect live.
+//   • Le composable est résilient : si le repository n'a pas encore chargé,
+//     on affiche le fond couleur unie sans attendre.
+// ==============================================================================
+
+// Instancier une fois au niveau de l'Activity ou d'un ViewModel,
+// puis passer en paramètre ou via CompositionLocal.
+// Exemple dans Activity :
+//   val wallpaperRepo = remember { WallpaperRepository(applicationContext) }
+//   WallpaperLayer(settings, isDark, scrollProgress, repo = wallpaperRepo)
 
 @Composable
 fun WallpaperLayer(
     settings: SettingsState,
     isDark: Boolean,
     scrollProgress: Float,
+    repo: WallpaperRepository,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
+    // Déclenche le chargement uniquement si la SOURCE a changé, pas le thème
+    LaunchedEffect(settings.wallpaperType, settings.wallpaperValue) {
+        repo.load(settings.wallpaperType, settings.wallpaperValue)
+    }
 
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var blurredBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // Collecte le résultat pré-calculé — jamais de calcul lourd ici
+    val bitmaps by repo.bitmaps.collectAsState()
 
+    // ColorFilter recalculé uniquement si isDark change (pas au scroll)
     val vibrantColorFilter = remember(isDark) {
         val matrix = ColorMatrix()
         if (isDark) matrix.setToSaturation(1.6f) else matrix.setToSaturation(1.3f)
         ColorFilter.colorMatrix(matrix)
     }
 
+    // Grain Mica recalculé uniquement si isDark change
     val noiseBrush = remember(isDark) {
         try { NoiseGenerator.generate(isDark) } catch (e: Exception) { null }
     }
 
-    val displayMetrics = remember { context.resources.displayMetrics }
-
-    // =========================================================================
-    // CHARGEMENT
-    // =========================================================================
-    LaunchedEffect(settings.wallpaperType, settings.wallpaperValue) {
-        withContext(Dispatchers.IO) {
-            val loadedBitmap = try {
-                when (settings.wallpaperType) {
-                    "FILE" -> {
-                        val file = File(settings.wallpaperValue)
-                        if (file.exists()) BitmapEngine.decodeSampledBitmapFromFile(
-                            file, displayMetrics.widthPixels, displayMetrics.heightPixels
-                        ) else null
-                    }
-                    "RES" -> {
-                        val id = settings.wallpaperValue.toIntOrNull()
-                        if (id != null) BitmapEngine.decodeSampledBitmapFromResource(
-                            context, id,
-                            displayMetrics.widthPixels, displayMetrics.heightPixels
-                        ) else null
-                    }
-                    "URI" -> {
-                        val uri = Uri.parse(settings.wallpaperValue)
-                        BitmapEngine.decodeSampledBitmapFromUri(
-                            context, uri,
-                            displayMetrics.widthPixels, displayMetrics.heightPixels
-                        )
-                    }
-                    else -> null
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            }
-
-            val blurBmp = loadedBitmap?.let {
-                BitmapEngine.createBlurryThumbnail(it, width = 300)
-            }
-
-            withContext(Dispatchers.Main) {
-                bitmap = loadedBitmap
-                blurredBitmap = blurBmp
-            }
-        }
-    }
-
-    // Parallax subtil — 2% max, spring pour coller au doigt sans effet PowerPoint
+    // Parallax : spring haute raideur, amortissement total → colle au doigt
     val parallaxOffset by animateFloatAsState(
         targetValue = scrollProgress * -0.02f,
         animationSpec = spring(
@@ -117,17 +81,18 @@ fun WallpaperLayer(
         label = "ParallaxOffset"
     )
 
-    // =========================================================================
-    // RENDU — TON DESIGN ORIGINAL
-    // =========================================================================
     Box(modifier = modifier.fillMaxSize().clipToBounds()) {
 
-        // --- A. FOND NET avec Parallax ---
-        Crossfade(targetState = bitmap, animationSpec = tween(600), label = "Wp") { bmp ->
-            if (bmp != null) {
-                Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
+        // ── Couche A : Image nette avec parallax ──────────────────────────────
+        Crossfade(
+            targetState = bitmaps?.sharp,
+            animationSpec = tween(600),
+            label = "WallpaperSharp"
+        ) { sharp ->
+            if (sharp != null) {
+                Box(Modifier.fillMaxSize().clipToBounds()) {
                     Image(
-                        bitmap = bmp.asImageBitmap(),
+                        bitmap = sharp.asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -140,6 +105,7 @@ fun WallpaperLayer(
                     )
                 }
             } else {
+                // Fallback couleur unie pendant le chargement
                 val solidColor = try {
                     Color(settings.wallpaperValue.toInt())
                 } catch (e: Exception) { Color(0xFF202020) }
@@ -147,26 +113,34 @@ fun WallpaperLayer(
             }
         }
 
-        // --- B. EFFET FLOU au scroll ---
+        // ── Couche B : Effet Mica au scroll ───────────────────────────────────
+        // N'est rendu que si l'utilisateur a scrollé au-delà d'un seuil minimal.
+        // L'image floutée est un Bitmap pré-calculé : AUCUN RenderEffect live,
+        // AUCUN calcul GPU par frame.
         if (scrollProgress > 0.01f) {
 
-            val renderEffect = if (Build.VERSION.SDK_INT >= 31) {
-                RenderEffect.createBlurEffect(80f, 80f, Shader.TileMode.CLAMP)
-                    .asComposeRenderEffect()
-            } else null
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .graphicsLayer { alpha = scrollProgress.coerceIn(0f, 1f) }
+            ) {
+                // Fond couleur de base (absorbe les zones transparentes du blur)
+                Box(
+                    Modifier.fillMaxSize().background(
+                        if (isDark) Color(0xFF181818) else Color(0xFFF3F3F3)
+                    )
+                )
 
-            Box(modifier = Modifier.fillMaxSize().clipToBounds().graphicsLayer {
-                alpha = scrollProgress.coerceIn(0f, 1f)
-                if (renderEffect != null) this.renderEffect = renderEffect
-            }) {
-                Box(Modifier.fillMaxSize().background(
-                    if (isDark) Color(0xFF181818) else Color(0xFFF3F3F3)
-                ))
-
-                Crossfade(targetState = blurredBitmap, animationSpec = tween(600), label = "BlurWp") { blurBmp ->
-                    if (blurBmp != null) {
+                // Image pré-floutée — affichée comme n'importe quel Bitmap
+                Crossfade(
+                    targetState = bitmaps?.blurred,
+                    animationSpec = tween(600),
+                    label = "WallpaperBlurred"
+                ) { blurred ->
+                    if (blurred != null) {
                         Image(
-                            bitmap = blurBmp.asImageBitmap(),
+                            bitmap = blurred.asImageBitmap(),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
@@ -177,181 +151,21 @@ fun WallpaperLayer(
                     }
                 }
 
-                if (isDark) Box(Modifier.fillMaxSize().background(Color.Black.copy(0.2f)))
+                // Assombrissement léger en mode sombre
+                if (isDark) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.2f)))
+                }
             }
 
-            // --- C. GRAIN MICA ---
+            // Grain Mica — texture noise très subtile
             if (noiseBrush != null) {
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = 0.06f }.background(noiseBrush))
-            }
-        }
-    }
-}
-
-// ==============================================================================
-// BITMAP ENGINE
-// Règle EXIF :
-//   API 28+ → ImageDecoder corrige automatiquement → PAS de rotation manuelle
-//   API <28 → BitmapFactory ignore l'EXIF → rotation manuelle obligatoire
-// ==============================================================================
-object BitmapEngine {
-    private const val MAX_TEXTURE_SIZE = 2048
-
-    fun decodeSampledBitmapFromUri(
-        context: Context, uri: Uri, reqWidth: Int, reqHeight: Int
-    ): Bitmap? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // ImageDecoder corrige l'EXIF seul — AUCUNE rotation manuelle
-                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                val bmp = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                    decoder.isMutableRequired = true
-                    var sampleSize = 1
-                    while (info.size.width / sampleSize > reqWidth &&
-                        info.size.height / sampleSize > reqHeight) {
-                        sampleSize *= 2
-                    }
-                    decoder.setTargetSampleSize(sampleSize)
-                }
-                checkTextureSize(bmp)
-            } else {
-                // API < 28 : rotation manuelle obligatoire
-                val rotation = context.contentResolver.openInputStream(uri)?.use {
-                    getRotationFromExif(ExifInterface(it))
-                } ?: 0f
-
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                context.contentResolver.openInputStream(uri)?.use {
-                    BitmapFactory.decodeStream(it, null, options)
-                }
-                options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-                options.inJustDecodeBounds = false
-                options.inPreferredConfig = Bitmap.Config.ARGB_8888
-
-                var decoded: Bitmap? = null
-                context.contentResolver.openInputStream(uri)?.use {
-                    decoded = BitmapFactory.decodeStream(it, null, options)
-                }
-                applyRotationAndTextureLimit(decoded, rotation)
-            }
-        } catch (e: Exception) { e.printStackTrace(); null }
-    }
-
-    fun decodeSampledBitmapFromFile(
-        file: File, reqWidth: Int, reqHeight: Int
-    ): Bitmap? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // ImageDecoder corrige l'EXIF seul — AUCUNE rotation manuelle
-                val source = ImageDecoder.createSource(file)
-                val bmp = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                    decoder.isMutableRequired = true
-                    var sampleSize = 1
-                    while (info.size.width / sampleSize > reqWidth &&
-                        info.size.height / sampleSize > reqHeight) {
-                        sampleSize *= 2
-                    }
-                    decoder.setTargetSampleSize(sampleSize)
-                }
-                checkTextureSize(bmp)
-            } else {
-                // API < 28 : rotation manuelle obligatoire
-                val rotation = try {
-                    getRotationFromExif(ExifInterface(file.absolutePath))
-                } catch (e: Exception) { 0f }
-
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.absolutePath, options)
-                options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-                options.inJustDecodeBounds = false
-                options.inPreferredConfig = Bitmap.Config.ARGB_8888
-
-                applyRotationAndTextureLimit(
-                    BitmapFactory.decodeFile(file.absolutePath, options), rotation
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = 0.06f }
+                        .background(noiseBrush)
                 )
             }
-        } catch (e: Exception) { e.printStackTrace(); null }
-    }
-
-    fun decodeSampledBitmapFromResource(
-        context: Context, resId: Int, reqWidth: Int, reqHeight: Int
-    ): Bitmap? {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeResource(context.resources, resId, options)
-        options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-        options.inJustDecodeBounds = false
-        return checkTextureSize(BitmapFactory.decodeResource(context.resources, resId, options))
-    }
-
-    fun createBlurryThumbnail(original: Bitmap, width: Int): Bitmap {
-        val ratio = width.toFloat() / original.width
-        val height = (original.height * ratio).toInt()
-        return try {
-            Bitmap.createScaledBitmap(original, width, height, true)
-        } catch (e: Exception) { original }
-    }
-
-    private fun getRotationFromExif(exif: ExifInterface): Float =
-        when (exif.getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL
-        )) {
-            ExifInterface.ORIENTATION_ROTATE_90,
-            ExifInterface.ORIENTATION_TRANSVERSE    -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180,
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270,
-            ExifInterface.ORIENTATION_TRANSPOSE     -> 270f
-            else                                    -> 0f
         }
-
-    private fun applyRotationAndTextureLimit(bitmap: Bitmap?, rotation: Float): Bitmap? {
-        if (bitmap == null) return null
-        val result = if (rotation != 0f) {
-            val matrix = Matrix().apply { postRotate(rotation) }
-            val rotated = Bitmap.createBitmap(
-                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-            )
-            if (rotated != bitmap) bitmap.recycle()
-            rotated
-        } else bitmap
-        return checkTextureSize(result)
-    }
-
-    private fun calculateInSampleSize(
-        options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int
-    ): Int {
-        val (height, width) = options.run { outHeight to outWidth }
-        var inSampleSize = 1
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight = height / 2
-            val halfWidth = width / 2
-            while ((halfHeight / inSampleSize) >= reqHeight &&
-                (halfWidth / inSampleSize) >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
-    }
-
-    private fun checkTextureSize(bitmap: Bitmap?): Bitmap? {
-        if (bitmap == null) return null
-        if (bitmap.width <= MAX_TEXTURE_SIZE && bitmap.height <= MAX_TEXTURE_SIZE) return bitmap
-        val ratio = min(
-            MAX_TEXTURE_SIZE.toFloat() / bitmap.width,
-            MAX_TEXTURE_SIZE.toFloat() / bitmap.height
-        )
-        return try {
-            val scaled = Bitmap.createScaledBitmap(
-                bitmap,
-                (bitmap.width * ratio).toInt().coerceAtLeast(1),
-                (bitmap.height * ratio).toInt().coerceAtLeast(1),
-                true
-            )
-            if (scaled != bitmap) bitmap.recycle()
-            scaled
-        } catch (e: Exception) { bitmap }
     }
 }

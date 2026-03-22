@@ -54,22 +54,24 @@ import kotlinx.coroutines.launch
 fun HomePage(
     state: SettingsState,
     onNavigate: (SettingsPageType) -> Unit,
-    onSetAccent: (Color) -> Unit
+    onSetAccent: (Color) -> Unit,
+    onSetWallpaper: (String, String) -> Unit = { _, _ -> },
+    onSetDarkMode: (Boolean) -> Unit = {}
 ) {
     val isDark = isSystemInDarkTheme()
     val titleColor = if (isDark) Color.White else Color(0xFF191919)
     val subtitleColor = if (isDark) Color.White.copy(0.7f) else Color(0xFF505050)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Personnalisation", color = titleColor, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            Box(Modifier.background(Color(0xFFFF5555).copy(0.1f), CircleShape).padding(6.dp)) {
-                Icon(FluentIcons.Regular.Sparkle, null, tint = Color(0xFFFF5555), modifier = Modifier.size(18.dp))
-            }
-        }
 
-        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Personnalisation",
+            color = titleColor,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(Modifier.height(20.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth().height(240.dp),
@@ -86,16 +88,67 @@ fun HomePage(
                 )
             }
 
-            Column(modifier = Modifier.weight(0.55f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
-                Text("Thèmes rapides", color = subtitleColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                val colors = listOf(Color(0xFFEF697B), Color(0xFF62C07D), Color(0xFF60CDFF), Color(0xFF2D2D2D), Color(0xFFE57E5D), Color(0xFF9E8674))
+            Column(
+                modifier = Modifier.weight(0.55f).fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Thèmes rapides",
+                    color = subtitleColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        colors.take(3).forEach { color -> ThemePreviewBox(color, isSelected = color == state.accentColor) { onSetAccent(color) } }
+                // 4 thèmes : wallpaper + couleur accent associée
+                val quickThemes = listOf(
+                    Triple(R.drawable.windows_11_1_mattbirchler, Color(0xFF0078D4), false),
+                    Triple(R.drawable.windows_11_2_mattbirchler, Color(0xFF881798), true),
+                    Triple(R.drawable.windows_11_3_mattbirchler, Color(0xFFE81123), true),
+                    Triple(R.drawable.windows_11_4_mattbirchler, Color(0xFF00B294), false)
+                )
+
+                val scope = rememberCoroutineScope()
+                val context = LocalContext.current
+
+                fun applyTheme(resId: Int, accent: Color, isDark: Boolean) {
+                    onSetAccent(accent)
+                    onSetWallpaper("RES", resId.toString())
+                    // Change le thème dark/light système
+                    onSetDarkMode(isDark)
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val bmp = BitmapFactory.decodeResource(context.resources, resId)
+                            WallpaperManager.getInstance(context).setBitmap(bmp)
+                        } catch (e: Exception) { e.printStackTrace() }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        colors.drop(3).forEach { color -> ThemePreviewBox(color, isSelected = color == state.accentColor) { onSetAccent(color) } }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        quickThemes.take(2).forEach { (resId, accent, isDark) ->
+                            val isSelected = state.wallpaperType == "RES"
+                                    && state.wallpaperValue == resId.toString()
+                                    && state.accentColor == accent
+                            WallpaperThemeBox(
+                                resId = resId,
+                                accentColor = accent,
+                                isSelected = isSelected,
+                                modifier = Modifier.weight(1f)
+                            ) { applyTheme(resId, accent, isDark) }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        quickThemes.drop(2).forEach { (resId, accent, isDark) ->
+                            val isSelected = state.wallpaperType == "RES"
+                                    && state.wallpaperValue == resId.toString()
+                                    && state.accentColor == accent
+                            WallpaperThemeBox(
+                                resId = resId,
+                                accentColor = accent,
+                                isSelected = isSelected,
+                                modifier = Modifier.weight(1f)
+                            ) { applyTheme(resId, accent, isDark) }
+                        }
                     }
                 }
 
@@ -103,7 +156,7 @@ fun HomePage(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
 
         FluentCard(padding = 4.dp) {
             Column {
@@ -132,13 +185,13 @@ fun HomePage(
 }
 
 // =================================================================================
-// COLOR PAGE (AVEC LE SWITCH MICA)
+// COLOR PAGE
 // =================================================================================
 @Composable
 fun ColorPage(
     state: SettingsState,
     onSetAccent: (Color) -> Unit,
-    onSetTransparency: (Boolean) -> Unit // <--- Le callback vital
+    onSetTransparency: (Boolean) -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
     val titleColor = if (isDark) Color.White else Color(0xFF191919)
@@ -156,7 +209,14 @@ fun ColorPage(
     }
 
     Column {
-        Text("Couleur & Effets", color = titleColor, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 16.dp))
+        Text(
+            "Couleur & Effets",
+            color = titleColor,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(Modifier.height(20.dp))
 
         FluentCard {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -166,7 +226,6 @@ fun ColorPage(
                     Text("Effets de transparence", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Text("Effet Mica matériel", color = subTextColor, fontSize = 12.sp)
                 }
-                // SWITCH CONNECTÉ AU CALLBACK
                 WindowsSwitch(
                     checked = state.transparencyEnabled,
                     onCheckedChange = onSetTransparency,
@@ -177,7 +236,13 @@ fun ColorPage(
         }
 
         Spacer(Modifier.height(16.dp))
-        Text("Couleurs Windows", color = titleColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+        Text(
+            "Couleurs Windows",
+            color = titleColor,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
 
         FluentCard(padding = 16.dp) {
             Column {
@@ -214,24 +279,14 @@ fun BackgroundPage(
 
     val myWallpapers = remember {
         listOf(
-            R.drawable.windows_11_1_mattbirchler,
-            R.drawable.windows_11_2_mattbirchler,
-            R.drawable.windows_11_3_mattbirchler,
-            R.drawable.windows_11_4_mattbirchler,
-            R.drawable.windows_11_5_mattbirchler,
-            R.drawable.windows_11_6_mattbirchler,
-            R.drawable.windows_11_7_mattbirchler,
-            R.drawable.windows_11_8_mattbirchler,
-            R.drawable.windows_11_9_mattbirchler,
-            R.drawable.windows_11_10_mattbirchler,
-            R.drawable.windows_11_11_mattbirchler,
-            R.drawable.windows_11_12_mattbirchler,
-            R.drawable.windows_11_13_mattbirchler,
-            R.drawable.windows_11_14_mattbirchler,
-            R.drawable.windows_11_15_mattbirchler,
-            R.drawable.windows_11_16_mattbirchler,
-            R.drawable.windows_11_17_mattbirchler,
-            R.drawable.windows_11_18_mattbirchler,
+            R.drawable.windows_11_1_mattbirchler, R.drawable.windows_11_2_mattbirchler,
+            R.drawable.windows_11_3_mattbirchler, R.drawable.windows_11_4_mattbirchler,
+            R.drawable.windows_11_5_mattbirchler, R.drawable.windows_11_6_mattbirchler,
+            R.drawable.windows_11_7_mattbirchler, R.drawable.windows_11_8_mattbirchler,
+            R.drawable.windows_11_9_mattbirchler, R.drawable.windows_11_10_mattbirchler,
+            R.drawable.windows_11_11_mattbirchler, R.drawable.windows_11_12_mattbirchler,
+            R.drawable.windows_11_15_mattbirchler, R.drawable.windows_11_16_mattbirchler,
+            R.drawable.windows_11_17_mattbirchler, R.drawable.windows_11_18_mattbirchler,
         )
     }
 
@@ -243,7 +298,6 @@ fun BackgroundPage(
         )
     }
 
-    // Fonction Helper pour appliquer au système
     fun applyToSystem(resId: Int) {
         scope.launch(Dispatchers.IO) {
             try {
@@ -264,12 +318,19 @@ fun BackgroundPage(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
-            Text("Arrière-plan", color = textColor, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-        }
+        Text(
+            "Arrière-plan",
+            color = textColor,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(Modifier.height(20.dp))
 
         Box(modifier = Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
-            val fallback = if (state.wallpaperType == "SOLID") Color(state.wallpaperValue.toIntOrNull() ?: Color.Black.toArgb()) else Color.Black
+            val fallback = if (state.wallpaperType == "SOLID")
+                Color(state.wallpaperValue.toIntOrNull() ?: Color.Black.toArgb())
+            else Color.Black
 
             PhonePreview(
                 isVertical = state.isVertical,
@@ -335,7 +396,7 @@ fun BackgroundPage(
                             val isSelected = (state.wallpaperType == "RES" && state.wallpaperValue == resId.toString())
                             Box(modifier = Modifier.width(72.dp).height(144.dp).clip(RoundedCornerShape(4.dp)).border(if (isSelected) 3.dp else 0.dp, state.accentColor, RoundedCornerShape(4.dp)).clickable {
                                 onSetWallpaper("RES", resId.toString())
-                                applyToSystem(resId) // APPLICATION SYSTÈME
+                                applyToSystem(resId)
                             }) {
                                 AsyncImage(
                                     model = ImageRequest.Builder(LocalContext.current).data(resId).crossfade(true).build(),
@@ -343,7 +404,10 @@ fun BackgroundPage(
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
-                                if (isSelected) { Box(Modifier.fillMaxSize().background(Color.Black.copy(0.3f))); Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.align(Alignment.Center)) }
+                                if (isSelected) {
+                                    Box(Modifier.fillMaxSize().background(Color.Black.copy(0.3f)))
+                                    Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.align(Alignment.Center))
+                                }
                             }
                         }
                     }
@@ -358,10 +422,10 @@ fun BackgroundPage(
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(solidColors) { color ->
                             val isSelected = (state.wallpaperValue == color.toArgb().toString())
-                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(color).border(if (isSelected) 3.dp else 1.dp, if (isSelected) state.accentColor else Color.Gray.copy(0.3f), CircleShape).clickable {
-                                onSetWallpaper("SOLID", color.toArgb().toString())
-                                applyColorToSystem(color.toArgb()) // APPLICATION SYSTÈME
-                            }) {
+                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(color)
+                                .border(if (isSelected) 3.dp else 1.dp, if (isSelected) state.accentColor else Color.Gray.copy(0.3f), CircleShape)
+                                .clickable { onSetWallpaper("SOLID", color.toArgb().toString()); applyColorToSystem(color.toArgb()) }
+                            ) {
                                 if (isSelected) Icon(Icons.Default.Check, null, tint = if (color.luminance() > 0.5) Color.Black else Color.White, modifier = Modifier.align(Alignment.Center))
                             }
                         }
@@ -401,10 +465,19 @@ fun LayoutPage(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Text("Thème & Grille", color = textColor, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Thème & Grille",
+            color = textColor,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(Modifier.height(4.dp)) // verticalArrangement spacedBy(20.dp) fait déjà le reste
 
         Box(modifier = Modifier.fillMaxWidth().height(260.dp), contentAlignment = Alignment.Center) {
-            val fallback = if (state.wallpaperType == "SOLID") Color(state.wallpaperValue.toIntOrNull() ?: Color.Black.toArgb()) else Color.Black
+            val fallback = if (state.wallpaperType == "SOLID")
+                Color(state.wallpaperValue.toIntOrNull() ?: Color.Black.toArgb())
+            else Color.Black
 
             PhonePreview(
                 isVertical = state.isVertical,
@@ -440,7 +513,9 @@ fun LayoutPage(
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Taille icônes: ${localIconSize.toInt()}", color = textColor)
-                    IconButton({ localIconSize = 60f; onSetIconSize(60f) }, Modifier.size(24.dp)) { Icon(Icons.Default.Refresh, null, tint = textColor.copy(0.6f)) }
+                    IconButton({ localIconSize = 60f; onSetIconSize(60f) }, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Refresh, null, tint = textColor.copy(0.6f))
+                    }
                 }
                 WindowsSlider(value = localIconSize, onValueChange = { localIconSize = it }, onValueChangeFinished = { onSetIconSize(localIconSize) }, range = 40f..80f, accentColor = state.accentColor)
 
@@ -448,12 +523,17 @@ fun LayoutPage(
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Taille texte: ${localFontSize.toInt()}", color = textColor)
-                    IconButton({ localFontSize = 13f; onSetFontSize(13f) }, Modifier.size(24.dp)) { Icon(Icons.Default.Refresh, null, tint = textColor.copy(0.6f)) }
+                    IconButton({ localFontSize = 13f; onSetFontSize(13f) }, Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Refresh, null, tint = textColor.copy(0.6f))
+                    }
                 }
                 WindowsSlider(value = localFontSize, onValueChange = { localFontSize = it }, onValueChangeFinished = { onSetFontSize(localFontSize) }, range = 10f..20f, accentColor = state.accentColor)
 
                 Spacer(Modifier.height(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) { Text("Afficher les noms", color = textColor, modifier = Modifier.weight(1f)); WindowsSwitch(state.showLabels, onSetLabels, true, state.accentColor) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Afficher les noms", color = textColor, modifier = Modifier.weight(1f))
+                    WindowsSwitch(state.showLabels, onSetLabels, true, state.accentColor)
+                }
             }
         }
 
@@ -471,39 +551,136 @@ fun LayoutPage(
 }
 
 // =================================================================================
+// WALLPAPER THEME BOX
+// =================================================================================
+@Composable
+fun WallpaperThemeBox(
+    resId: Int,
+    accentColor: Color,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val isDark = isSystemInDarkTheme()
+    Box(
+        modifier = modifier
+            .aspectRatio(1.4f)
+            .clip(RoundedCornerShape(8.dp))
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) accentColor
+                else (if (isDark) Color.White.copy(0.15f) else Color.Black.copy(0.1f)),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable { onClick() }
+    ) {
+        // Fond d'écran en miniature
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(resId)
+                .crossfade(true)
+                .size(300)
+                .build(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Mini widget en bas à droite avec la couleur accent
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(6.dp)
+                .size(width = 36.dp, height = 24.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(
+                    if (isDark) Color(0xFF1E1E1E).copy(alpha = 0.85f)
+                    else Color.White.copy(alpha = 0.85f)
+                )
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+                    .size(width = 16.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(accentColor)
+            )
+        }
+
+        // Checkmark si sélectionné
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(accentColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(10.dp)
+                )
+            }
+        }
+    }
+}
+
+// =================================================================================
 // HIDDEN APPS DIALOG
 // =================================================================================
 @Composable
-fun HiddenAppsDialog(allApps: List<AppModel>, hiddenApps: Set<String>, accentColor: Color, onDismiss: () -> Unit, onToggleApp: (String, Boolean) -> Unit) {
+fun HiddenAppsDialog(
+    allApps: List<AppModel>,
+    hiddenApps: Set<String>,
+    accentColor: Color,
+    onDismiss: () -> Unit,
+    onToggleApp: (String, Boolean) -> Unit
+) {
     val isDark = isSystemInDarkTheme()
     val bgColor = if (isDark) Color(0xFF1F1F1F) else Color(0xFFF9F9F9)
     val textColor = if (isDark) Color.White else Color(0xFF1D1D1D)
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), color = bgColor, modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp).border(1.dp, if(isDark) Color.White.copy(0.1f) else Color.Black.copy(0.1f), RoundedCornerShape(12.dp))) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = bgColor,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)
+                .border(1.dp, if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.1f), RoundedCornerShape(12.dp))
+        ) {
             Column(Modifier.padding(16.dp)) {
                 Text("Masquer les applications", color = textColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
                 androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(allApps) { app ->
                         val isHidden = hiddenApps.contains(app.packageName)
-                        Row(Modifier.fillMaxWidth().clickable { onToggleApp(app.packageName, !isHidden) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-
-                            // Utilisation d'Image standard pour l'icône
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onToggleApp(app.packageName, !isHidden) }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             val iconBitmap = remember(app.packageName) { IconCache.get(app.packageName) }
                             if (iconBitmap != null) {
                                 Image(bitmap = iconBitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.size(32.dp))
                             } else {
                                 Box(Modifier.size(32.dp).background(Color.Gray.copy(0.2f), RoundedCornerShape(8.dp)))
                             }
-
                             Spacer(Modifier.width(12.dp))
                             Text(app.label, color = textColor, modifier = Modifier.weight(1f), fontSize = 14.sp)
-                            Checkbox(checked = isHidden, onCheckedChange = { onToggleApp(app.packageName, it) }, colors = CheckboxDefaults.colors(checkedColor = accentColor))
+                            Checkbox(
+                                checked = isHidden,
+                                onCheckedChange = { onToggleApp(app.packageName, it) },
+                                colors = CheckboxDefaults.colors(checkedColor = accentColor)
+                            )
                         }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { WindowsButton("Fermer", onClick = onDismiss) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    WindowsButton("Fermer", onClick = onDismiss)
+                }
             }
         }
     }

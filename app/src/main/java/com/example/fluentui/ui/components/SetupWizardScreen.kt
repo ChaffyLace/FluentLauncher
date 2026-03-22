@@ -37,6 +37,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -76,6 +77,7 @@ fun SetupWizardScreen(
     // --- PERMISSION STATES ---
     var hasStoragePermission by remember { mutableStateOf(checkStoragePermission(context)) }
     var hasContactsPermission by remember { mutableStateOf(checkContactsPermission(context)) }
+    var hasNotificationPermission by remember { mutableStateOf(checkNotificationPermission(context)) }
 
     // Launcher for standard runtime permissions (Contacts)
     val contactsPermissionLauncher = rememberLauncherForActivityResult(
@@ -84,12 +86,13 @@ fun SetupWizardScreen(
         hasContactsPermission = isGranted
     }
 
-    // Auto-refresh permissions when returning from Android Settings (for Storage)
+    // Auto-refresh permissions when returning from Android Settings (for Storage & Notifications)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasStoragePermission = checkStoragePermission(context)
                 hasContactsPermission = checkContactsPermission(context)
+                hasNotificationPermission = checkNotificationPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -110,7 +113,7 @@ fun SetupWizardScreen(
         // Z-LAYER 0: THE MICA DESKTOP (Always present, blurred in background)
         // ====================================================================
         Image(
-            painter = painterResource(id = R.drawable.windows_11_1_mattbirchler),
+            painter = painterResource(id = R.drawable.windows_11_1_mattbirchler), // Remplace par ta vraie ressource
             contentDescription = "OOBE Background",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().blur(radius = 80.dp)
@@ -166,6 +169,7 @@ fun SetupWizardScreen(
                                 accentColor = accentColor,
                                 hasStorage = hasStoragePermission,
                                 hasContacts = hasContactsPermission,
+                                hasNotifications = hasNotificationPermission,
                                 onRequestContacts = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) },
                                 onNext = { currentStep = OobeStep.DEFAULT_LAUNCHER }
                             )
@@ -292,6 +296,7 @@ private fun PermissionsPage(
     accentColor: Color,
     hasStorage: Boolean,
     hasContacts: Boolean,
+    hasNotifications: Boolean, // AJOUT : Paramètre pour les notifications
     onRequestContacts: () -> Unit,
     onNext: () -> Unit
 ) {
@@ -299,7 +304,7 @@ private fun PermissionsPage(
         Text("System Access", fontSize = 28.sp, fontWeight = FontWeight.SemiBold, color = textColor)
         Spacer(modifier = Modifier.height(16.dp))
         Text("To display your apps, wallpapers, and contacts, Fluent requires these specific permissions.", fontSize = 15.sp, color = textColor.copy(alpha = 0.7f))
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(32.dp)) // Réduit légèrement pour faire de la place pour le 3ème élément
 
         // Storage Permission Row
         FluentPermissionRow(
@@ -315,7 +320,7 @@ private fun PermissionsPage(
             }
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Contacts Permission Row
         FluentPermissionRow(
@@ -329,10 +334,30 @@ private fun PermissionsPage(
             }
         )
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // AJOUT : Notifications Permission Row
+        FluentPermissionRow(
+            title = "Notifications & Badges",
+            subtitle = if (hasNotifications) "Granted" else "Required to show unread badges",
+            textColor = textColor, accentColor = accentColor, isGranted = hasNotifications,
+            onClick = {
+                if (!hasNotifications) {
+                    // Ouvre directement la page système des accès aux notifications
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+            }
+        )
+
         Spacer(modifier = Modifier.weight(1f))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            // Require BOTH permissions to proceed to maintain standard OOBE constraints
-            FluentPrimaryButton("Next", accentColor, enabled = hasStorage && hasContacts, onClick = onNext)
+            // L'utilisateur doit accorder les 3 permissions pour continuer
+            FluentPrimaryButton(
+                text = "Next",
+                accentColor = accentColor,
+                enabled = hasStorage && hasContacts && hasNotifications,
+                onClick = onNext
+            )
         }
     }
 }
@@ -428,6 +453,7 @@ private fun FluentPermissionRow(title: String, subtitle: String, textColor: Colo
     }
 }
 
+
 private fun checkStoragePermission(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         android.os.Environment.isExternalStorageManager()
@@ -436,7 +462,10 @@ private fun checkStoragePermission(context: Context): Boolean {
     }
 }
 
-// Nouvelle fonction de vérification pour les contacts
 private fun checkContactsPermission(context: Context): Boolean {
     return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun checkNotificationPermission(context: Context): Boolean {
+    return NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 }

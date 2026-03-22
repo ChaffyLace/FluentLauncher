@@ -2,12 +2,14 @@ package com.example.fluentui.wallpaper
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.Dp
@@ -17,8 +19,8 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
 /**
- * Modifier Mica "Zéro Transparence Accidentelle".
- * Garantit que le fond est toujours opaque par rapport aux icônes en dessous.
+ * Applies a high-performance Windows 11 Mica/Acrylic material effect.
+ * Features a Persistent Cache to prevent black screens caused by Android's aggressive Bitmap recycling.
  */
 fun Modifier.fluentMicaComplex(
     micaParams: MicaParams?,
@@ -26,68 +28,81 @@ fun Modifier.fluentMicaComplex(
     elevation: Dp = 0.dp,
     shape: Shape
 ): Modifier = composed {
-    // Couleurs de secours (Opaque) : Gris Sombre ou Gris Clair
-    // Utilisées si le Mica est désactivé ou si le bitmap flou n'est pas encore chargé.
-    val fallbackColor = if (micaParams?.isDark == true) Color(0xFF202020) else Color(0xFFF3F3F3)
+    val isDarkTheme = micaParams?.isDark == true
+    val fallbackColor = if (isDarkTheme) Color(0xFF202020) else Color(0xFFF3F3F3)
 
+    // Fast return for static UI (Battery saver or missing parameters)
     if (!enabled || micaParams == null) {
-        // CAS 1 : MICA DÉSACTIVÉ -> On met du SOLIDE
-        this
+        return@composed this
             .shadow(elevation, shape)
-            .background(fallbackColor, shape) // <-- BACKGROUND OPAQUE
+            .background(fallbackColor, shape)
             .border(1.dp, Color.White.copy(0.1f), shape)
-    } else {
-        // CAS 2 : MICA ACTIVÉ
-        this
-            .shadow(elevation, shape)
-            .clip(shape)
-            // On dessine le fond manuellement
-            .drawBehind {
-                // ÉTAPE 0 : LE "BOUCHE-TROU" (CRUCIAL)
-                // On peint d'abord en noir/blanc opaque pour cacher les icônes du Grid.
-                // Même si l'image floue met 100ms à charger, l'utilisateur ne verra pas le grid.
-                drawRect(color = fallbackColor, alpha = 1f)
+    }
 
-                // ÉTAPE 1 : L'IMAGE FLOUTÉE (WALLPAPER)
-                micaParams.blurredWallpaperBitmap?.let { bitmap ->
+    // =========================================================================
+    // BOUCLIER ANTI-RECYCLAGE (Persistent Cache)
+    // Au lieu de lire le bitmap à la volée, on le stocke dans un état persistant.
+    // Si l'OS ou le ViewModel détruit le bitmap source 1 seconde plus tard,
+    // l'interface graphique gardera cette copie intacte et l'écran ne deviendra pas noir.
+    // =========================================================================
+    var persistentBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(micaParams.blurredWallpaperBitmap) {
+        val bmp = micaParams.blurredWallpaperBitmap
+        if (bmp != null && !bmp.isRecycled) {
+            try {
+                // On verrouille la conversion en ImageBitmap dans la RAM de Compose
+                persistentBitmap = bmp.asImageBitmap()
+            } catch (e: Exception) {
+                // Fail silently
+            }
+        }
+    }
+
+    this
+        .shadow(elevation, shape)
+        .clip(shape)
+        .drawBehind {
+            // 1. Couche de base opaque (cache les icônes qui passent en dessous)
+            drawRect(color = fallbackColor, alpha = 1f)
+
+            // 2. Rendu de l'image mise en cache (ne disparaîtra plus)
+            persistentBitmap?.let { imageBitmap ->
+                val dstWidth = size.width
+                val dstHeight = size.height
+
+                if (dstWidth > 0f && dstHeight > 0f) {
+                    val srcWidth = imageBitmap.width.toFloat()
+                    val srcHeight = imageBitmap.height.toFloat()
+
+                    // CenterCrop logic
+                    val scale = max(dstWidth / srcWidth, dstHeight / srcHeight)
+                    val scaledWidth = srcWidth * scale
+                    val scaledHeight = srcHeight * scale
+
+                    val left = (dstWidth - scaledWidth) / 2f
+                    val top = (dstHeight - scaledHeight) / 2f
+
                     try {
-                        val imageBitmap = bitmap.asImageBitmap()
-
-                        // Calcul CenterCrop
-                        val srcWidth = imageBitmap.width
-                        val srcHeight = imageBitmap.height
-                        val dstWidth = size.width
-                        val dstHeight = size.height
-
-                        val scale = max(dstWidth / srcWidth, dstHeight / srcHeight)
-                        val scaledWidth = srcWidth * scale
-                        val scaledHeight = srcHeight * scale
-
-                        val left = (dstWidth - scaledWidth) / 2
-                        val top = (dstHeight - scaledHeight) / 2
-
-                        // On dessine l'image (qui va recouvrir le couche "Bouche-Trou")
                         drawImage(
                             image = imageBitmap,
                             dstOffset = IntOffset(left.toInt(), top.toInt()),
                             dstSize = IntSize(scaledWidth.toInt(), scaledHeight.toInt())
                         )
                     } catch (e: Exception) {
-                        // Si le dessin échoue, on a toujours l'ÉTAPE 0 qui assure l'opacité.
+                        // Tolérance aux pannes OpenGL
                     }
                 }
-
-                // ÉTAPE 2 : LA TEINTE DE SURFACE (Translucide)
-                drawRect(color = micaParams.surfaceColor, alpha = micaParams.surfaceAlpha)
-
-                // ÉTAPE 3 : LA COULEUR DOMINANTE (Gradient)
-                drawRect(brush = micaParams.tintBrush, alpha = micaParams.tintAlpha)
-
-                // ÉTAPE 4 : LE GRAIN (Noise)
-                micaParams.noiseBrush?.let { brush ->
-                    drawRect(brush = brush, alpha = micaParams.noiseAlpha)
-                }
             }
-            .border(1.dp, Color.White.copy(0.08f), shape)
-    }
+
+            // 3. Application des teintes Windows 11
+            drawRect(color = micaParams.surfaceColor, alpha = micaParams.surfaceAlpha)
+            drawRect(brush = micaParams.tintBrush, alpha = micaParams.tintAlpha)
+
+            // 4. Grain
+            micaParams.noiseBrush?.let { brush ->
+                drawRect(brush = brush, alpha = micaParams.noiseAlpha)
+            }
+        }
+        .border(1.dp, Color.White.copy(0.08f), shape)
 }

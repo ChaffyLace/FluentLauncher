@@ -3,8 +3,6 @@ package com.example.fluentui.ui.components
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -28,8 +26,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -56,59 +52,31 @@ import kotlinx.coroutines.launch
 import java.text.Collator
 import kotlin.math.roundToInt
 
-// Standard Windows 11 Icon Shape
 private val AppIconShape = RoundedCornerShape(12.dp)
 
+// =============================================================================
+// INTERNAL APP ICON
+// =============================================================================
+
 @Composable
-fun InternalAppIcon(
-    packageName: String,
-    size: Float,
-    modifier: Modifier = Modifier,
-    badgeCount: Int = 0,
-    badgeColor: Color = Color(0xFF60CDFF)
-) {
-    Box(modifier = modifier) {
-        // 1. Image Icône
-        val bitmap = remember(packageName) { IconCache.get(packageName) }
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Fit
-            )
-        } else {
-            Box(modifier = Modifier.matchParentSize().background(Color.Gray.copy(0.2f), AppIconShape))
-        }
-
-        if (badgeCount > 0) {
-            val badgeText = if (badgeCount > 99) "99+" else badgeCount.toString()
-            val textColor = if (badgeColor.luminance() > 0.5f) Color.Black else Color.White
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 4.dp, y = (-2).dp)
-                    .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
-                    .clip(CircleShape)
-                    .background(badgeColor)
-                    .zIndex(10f),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = badgeText,
-                    color = textColor,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                )
-            }
-        }
+fun InternalAppIcon(packageName: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(packageName) { IconCache.get(packageName) }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Fit
+        )
+    } else {
+        Box(modifier = modifier.background(Color.Gray.copy(0.2f), AppIconShape))
     }
 }
 
-// --- GRID PRINCIPALE ---
+// =============================================================================
+// MAIN APP GRID
+// =============================================================================
+
 @Composable
 fun AppGrid(
     viewModel: AppViewModel = viewModel(),
@@ -128,22 +96,19 @@ fun AppGrid(
     micaParams: MicaParams
 ) {
     val context = LocalContext.current
-    val isDark = isSystemInDarkTheme()
-    val scope = rememberCoroutineScope()
-    val haptic = LocalHapticFeedback.current
+    val isDark  = isSystemInDarkTheme()
+    val scope   = rememberCoroutineScope()
+    val haptic  = LocalHapticFeedback.current
 
-    // Données Notifications
     val notifCounts by viewModel.notificationCounts.collectAsState()
 
-    var draggingPackage by remember { mutableStateOf<String?>(null) }
+    var draggingPackage      by remember { mutableStateOf<String?>(null) }
     var ghostInitialPosition by remember { mutableStateOf(Offset.Zero) }
-    var draggingOffset by remember { mutableStateOf(Offset.Zero) }
-
+    var draggingOffset       by remember { mutableStateOf(Offset.Zero) }
     val itemBounds = remember { mutableMapOf<String, Rect>() }
-    var isHoveringDelete by remember { mutableStateOf(false) }
-    var lastSwapTime by remember { mutableStateOf(0L) }
-
-    val isGridInDragMode = draggingPackage != null
+    var isHoveringDelete     by remember { mutableStateOf(false) }
+    var lastSwapTime         by remember { mutableStateOf(0L) }
+    val isGridInDragMode      = draggingPackage != null
 
     val allApps by remember(viewModel.otherApps.value, searchQuery, hiddenApps) {
         derivedStateOf {
@@ -155,7 +120,9 @@ fun AppGrid(
     }
 
     if (isVertical) {
-        val appsByLetter by remember(allApps) { derivedStateOf { AppGrouper.groupByAlphabet(allApps) } }
+        val appsByLetter by remember(allApps) {
+            derivedStateOf { AppGrouper.groupByAlphabet(allApps) }
+        }
         Box(Modifier.fillMaxSize()) {
             LazyVerticalGrid(
                 state = state,
@@ -165,22 +132,24 @@ fun AppGrid(
                 verticalArrangement = Arrangement.spacedBy(verticalSpacing.dp)
             ) {
                 appsByLetter.forEach { (letter, appList) ->
-                    item(span = { GridItemSpan(maxLineSpan) }) { MicaSectionHeader(letter, isDark, micaParams) }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        MicaSectionHeader(letter, isDark, micaParams)
+                    }
                     items(appList) { app ->
                         AppIconItem(
-                            app = app, iconSize = iconSize, fontSize = fontSize, showLabel = showLabels,
-                            accentColor = accentColor, isDragging = false, isGridInDragMode = false,
-                            micaParams = micaParams, onPinRequest = onPinRequest, onClose = onClose ?: {},
-                            onDragStart = {}, badgeCount = notifCounts[app.packageName] ?: 0,
+                            app = app, iconSize = iconSize, fontSize = fontSize,
+                            showLabel = showLabels, accentColor = accentColor,
+                            isDragging = false, isGridInDragMode = false,
+                            micaParams = micaParams, onPinRequest = onPinRequest,
+                            onClose = onClose ?: {}, onDragStart = {},
+                            badgeCount = notifCounts[app.packageName] ?: 0,
                             viewModel = viewModel
                         )
                     }
                 }
             }
-            // Scrollbar Windows
             WindowsStyleScrollbar(
-                state,
-                isDark,
+                state, isDark,
                 Modifier
                     .align(Alignment.CenterEnd)
                     .padding(top = 60.dp, bottom = 120.dp, end = 4.dp)
@@ -190,16 +159,14 @@ fun AppGrid(
         }
     } else {
         val itemsPerPage = columnCount * rowCount
-        val pageCount = (allApps.size + itemsPerPage - 1) / itemsPerPage.coerceAtLeast(1)
-        val pagerState = rememberPagerState(pageCount = { pageCount.coerceAtLeast(1) })
+        val pageCount    = (allApps.size + itemsPerPage - 1) / itemsPerPage.coerceAtLeast(1)
+        val pagerState   = rememberPagerState(pageCount = { pageCount.coerceAtLeast(1) })
 
         Box(modifier = Modifier.fillMaxSize()) {
-
-            // Delete Zone
             AnimatedVisibility(
                 visible = isGridInDragMode,
-                enter = slideInVertically { -it } + fadeIn(),
-                exit = slideOutVertically { -it } + fadeOut(),
+                enter   = slideInVertically { -it } + fadeIn(),
+                exit    = slideOutVertically { -it } + fadeOut(),
                 modifier = Modifier
                     .zIndex(100f)
                     .align(Alignment.TopCenter)
@@ -214,30 +181,27 @@ fun AppGrid(
                     modifier = Modifier.weight(1f),
                     userScrollEnabled = !isGridInDragMode
                 ) { pageIndex ->
-
                     val startIndex = pageIndex * itemsPerPage
-                    val endIndex = (startIndex + itemsPerPage).coerceAtMost(allApps.size)
-                    val pageApps = if (startIndex < allApps.size) allApps.subList(startIndex, endIndex) else emptyList()
+                    val endIndex   = (startIndex + itemsPerPage).coerceAtMost(allApps.size)
+                    val pageApps   = if (startIndex < allApps.size)
+                        allApps.subList(startIndex, endIndex) else emptyList()
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnCount),
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 24.dp),
-                        verticalArrangement = Arrangement.SpaceEvenly,
+                        verticalArrangement   = Arrangement.SpaceEvenly,
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        userScrollEnabled = false,
-                        contentPadding = PaddingValues(vertical = 10.dp)
+                        userScrollEnabled     = false,
+                        contentPadding        = PaddingValues(vertical = 10.dp)
                     ) {
                         items(items = pageApps, key = { it.packageName }) { app ->
-
-                            val isItemDragging = (draggingPackage == app.packageName)
-
+                            val isItemDragging = draggingPackage == app.packageName
                             Box(
                                 modifier = Modifier
-                                    // CORRECTION : animateItem remplace animateItemPlacement
                                     .animateItem(
-                                        fadeInSpec = null,
+                                        fadeInSpec  = null,
                                         fadeOutSpec = null,
                                         placementSpec = spring(
                                             stiffness = Spring.StiffnessMediumLow,
@@ -245,56 +209,51 @@ fun AppGrid(
                                         )
                                     )
                                     .onGloballyPositioned { coords ->
-                                        if (coords.isAttached) itemBounds[app.packageName] = coords.boundsInWindow()
+                                        if (coords.isAttached)
+                                            itemBounds[app.packageName] = coords.boundsInWindow()
                                     }
                                     .zIndex(if (isItemDragging) 0f else 1f)
                             ) {
                                 AppIconItem(
-                                    app = app,
-                                    iconSize = iconSize,
-                                    fontSize = fontSize,
-                                    showLabel = showLabels,
-                                    accentColor = accentColor,
-                                    isDragging = isItemDragging,
+                                    app             = app,
+                                    iconSize        = iconSize,
+                                    fontSize        = fontSize,
+                                    showLabel       = showLabels,
+                                    accentColor     = accentColor,
+                                    isDragging      = isItemDragging,
                                     isGridInDragMode = isGridInDragMode,
-                                    micaParams = micaParams,
-                                    onPinRequest = onPinRequest,
-                                    onClose = onClose ?: {},
-                                    badgeCount = notifCounts[app.packageName] ?: 0,
-                                    viewModel = viewModel,
-
-                                    onDragStart = { iconAbsolutePos ->
+                                    micaParams      = micaParams,
+                                    onPinRequest    = onPinRequest,
+                                    onClose         = onClose ?: {},
+                                    badgeCount      = notifCounts[app.packageName] ?: 0,
+                                    viewModel       = viewModel,
+                                    onDragStart     = { iconAbsolutePos ->
                                         if (searchQuery.isEmpty()) {
                                             ghostInitialPosition = iconAbsolutePos
                                             draggingOffset = Offset.Zero
                                         }
                                     },
-
                                     onDrag = { dragAmount ->
                                         draggingOffset += dragAmount
-
                                         if (draggingPackage == null) {
                                             if (draggingOffset.getDistance() > 30f) {
                                                 draggingPackage = app.packageName
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             }
                                         } else {
-                                            val ghostCenter = ghostInitialPosition + draggingOffset + Offset(
-                                                (iconSize / 2).dp.value,
-                                                (iconSize / 2).dp.value
-                                            )
+                                            val ghostCenter = ghostInitialPosition + draggingOffset +
+                                                    Offset((iconSize / 2).dp.value, (iconSize / 2).dp.value)
                                             isHoveringDelete = ghostCenter.y < 350f
 
                                             if (!isHoveringDelete) {
-                                                val targetPackage = itemBounds.entries.find { (_, bounds) -> bounds.contains(ghostCenter) }?.key
-
-                                                if (targetPackage != null && targetPackage != draggingPackage) {
-                                                    val fromIndex = allApps.indexOfFirst { it.packageName == draggingPackage }
-                                                    val toIndex = allApps.indexOfFirst { it.packageName == targetPackage }
-                                                    val now = System.currentTimeMillis()
-
-                                                    if (fromIndex != -1 && toIndex != -1 && (now - lastSwapTime > 200)) {
-                                                        viewModel.moveApp(fromIndex, toIndex)
+                                                val targetPkg = itemBounds.entries
+                                                    .find { (_, bounds) -> bounds.contains(ghostCenter) }?.key
+                                                if (targetPkg != null && targetPkg != draggingPackage) {
+                                                    val fromIdx = allApps.indexOfFirst { it.packageName == draggingPackage }
+                                                    val toIdx   = allApps.indexOfFirst { it.packageName == targetPkg }
+                                                    val now     = System.currentTimeMillis()
+                                                    if (fromIdx != -1 && toIdx != -1 && now - lastSwapTime > 200) {
+                                                        viewModel.moveApp(fromIdx, toIdx)
                                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                         lastSwapTime = now
                                                     }
@@ -302,14 +261,13 @@ fun AppGrid(
                                             }
                                         }
                                     },
-
                                     onDragEnd = {
                                         if (isHoveringDelete && draggingPackage != null) {
                                             AppActions.uninstallApp(context, draggingPackage!!)
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         }
-                                        draggingPackage = null
-                                        draggingOffset = Offset.Zero
+                                        draggingPackage  = null
+                                        draggingOffset   = Offset.Zero
                                         isHoveringDelete = false
                                     }
                                 )
@@ -318,14 +276,12 @@ fun AppGrid(
                     }
                 }
 
-                // DOTS
                 if (pageCount > 1) {
                     PagerIndicator(pageCount, pagerState.currentPage, accentColor, scope, pagerState)
                 }
                 Spacer(modifier = Modifier.height(100.dp))
             }
 
-            // FANTÔME
             if (draggingPackage != null) {
                 val draggedApp = allApps.find { it.packageName == draggingPackage }
                 if (draggedApp != null) {
@@ -337,71 +293,131 @@ fun AppGrid(
     }
 }
 
+// =============================================================================
+// APP ICON ITEM
+// =============================================================================
+
 @Composable
 private fun AppIconItem(
-    app: AppModel,
-    iconSize: Float,
-    fontSize: Float,
-    showLabel: Boolean,
-    accentColor: Color,
-    isDragging: Boolean,
+    app:             AppModel,
+    iconSize:        Float,
+    fontSize:        Float,
+    showLabel:       Boolean,
+    accentColor:     Color,
+    isDragging:      Boolean,
     isGridInDragMode: Boolean,
-    micaParams: MicaParams,
-    onPinRequest: (AppModel) -> Unit,
-    onClose: () -> Unit,
-    badgeCount: Int = 0,
-    viewModel: AppViewModel,
-    onDragStart: (Offset) -> Unit = {},
-    onDrag: (Offset) -> Unit = {},
-    onDragEnd: () -> Unit = {}
+    micaParams:      MicaParams,
+    onPinRequest:    (AppModel) -> Unit,
+    onClose:         () -> Unit,
+    badgeCount:      Int = 0,
+    viewModel:       AppViewModel,
+    onDragStart:     (Offset) -> Unit = {},
+    onDrag:          (Offset) -> Unit = {},
+    onDragEnd:       () -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
+    val context  = LocalContext.current
+    val haptic   = LocalHapticFeedback.current
+    val scope    = rememberCoroutineScope()
+    val density  = LocalDensity.current
     val smartTextColor = micaParams.primaryColor
-    val density = LocalDensity.current
 
-    var showMenu by remember { mutableStateOf(false) }
+    var showMenu     by remember { mutableStateOf(false) }
     var itemWindowPos by remember { mutableStateOf(Offset.Zero) }
-    var isPressed by remember { mutableStateOf(false) }
-    var hasMoved by remember { mutableStateOf(false) }
+    var isPressed    by remember { mutableStateOf(false) }
+    var hasMoved     by remember { mutableStateOf(false) }
+
+    // FIX 3 — Animation d'épinglage.
+    // isPinning déclenche un flash scale 1→1.3→1 puis onPinRequest + onClose.
+    var isPinning by remember { mutableStateOf(false) }
+    val pinScale by animateFloatAsState(
+        targetValue   = if (isPinning) 1.25f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness    = Spring.StiffnessMedium
+        ),
+        finishedListener = { _ ->
+            // Quand le spring retombe à 1f, on exécute le pin
+            if (isPinning) {
+                isPinning = false
+                onPinRequest(app)
+                onClose()
+            }
+        },
+        label = "pin_scale"
+    )
 
     LaunchedEffect(isDragging) { if (isDragging) showMenu = false }
 
-    val scale by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "scale")
-    val targetAlpha = if (isGridInDragMode) {
-        if (isDragging) 0f else 0.5f
-    } else 1f
-    val alpha by animateFloatAsState(targetAlpha, label = "dimming")
+    val pressScale by animateFloatAsState(
+        targetValue   = if (isPressed) 0.93f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessHigh),
+        label         = "press_scale"
+    )
+    val dimAlpha by animateFloatAsState(
+        targetValue = when {
+            isGridInDragMode && isDragging -> 0f
+            isGridInDragMode               -> 0.5f
+            else                           -> 1f
+        },
+        label = "dim"
+    )
 
-    // RÉCUPÉRATION DE L'ÉTAT DE TRANSPARENCE
     val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
 
     Box(
         modifier = Modifier
-            .onGloballyPositioned { coordinates ->
-                if (coordinates.isAttached) itemWindowPos = coordinates.positionInWindow()
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) itemWindowPos = coords.positionInWindow()
             }
-            .scale(scale)
-            .graphicsLayer { this.alpha = alpha }
+            // pinScale enveloppe pressScale pour que les deux s'appliquent
+            .graphicsLayer {
+                scaleX = pinScale * pressScale
+                scaleY = pinScale * pressScale
+                alpha  = dimAlpha
+            }
+            // ── FIX 2 : onLongPress dans detectTapGestures ────────────────────
+            // Un seul bloc pointerInput gère tap + long press + press visual.
+            // detectDragGesturesAfterLongPress gère UNIQUEMENT le drag pur.
+            //
+            // Avant : showMenu était mis à true dans onDragEnd quand !hasMoved.
+            // Problème : l'UP event était parfois consommé par detectTapGestures
+            // avant que onDragEnd le voie → menu aléatoire au premier appui.
+            //
+            // Fix : onLongPress est appelé de façon synchrone par le framework
+            // dès que le seuil est atteint, sans dépendre de l'UP event.
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onPress = { isPressed = true; tryAwaitRelease(); isPressed = false },
+                    onPress = {
+                        isPressed = true
+                        try { tryAwaitRelease() } finally { isPressed = false }
+                    },
                     onTap = {
-                        scope.launch {
-                            delay(50)
-                            val sizePx = with(density) { iconSize.dp.roundToPx() }
-                            AppLauncher.launch(context, null, app.packageName, itemWindowPos, sizePx)
+                        if (!showMenu && !isPinning) {
+                            scope.launch {
+                                delay(50)
+                                val sizePx = with(density) { iconSize.dp.roundToPx() }
+                                AppLauncher.launch(context, null, app.packageName, itemWindowPos, sizePx)
+                            }
+                        }
+                    },
+                    onLongPress = {
+                        // Long press sans drag → ouvre le menu contexte immédiatement.
+                        // Fiable car ce bloc contrôle déjà le pointer ici.
+                        if (!isPinning && !showMenu) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showMenu = true
                         }
                     }
                 )
             }
+            // ── Drag pur — ne touche plus au menu ─────────────────────────────
             .pointerInput(Unit) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         isPressed = true
-                        hasMoved = false
+                        hasMoved  = false
+                        // Si le menu est déjà ouvert via onLongPress, on le ferme
+                        showMenu  = false
                         onDragStart(itemWindowPos)
                     },
                     onDrag = { change, dragAmount ->
@@ -411,7 +427,7 @@ private fun AppIconItem(
                     },
                     onDragEnd = {
                         isPressed = false
-                        if (!hasMoved) showMenu = true
+                        // Plus de showMenu ici — géré exclusivement par onLongPress
                         onDragEnd()
                     },
                     onDragCancel = {
@@ -422,25 +438,26 @@ private fun AppIconItem(
             },
         contentAlignment = Alignment.TopCenter
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-
-            InternalAppIcon(
-                packageName = app.packageName,
-                size = iconSize,
-                modifier = Modifier.size(iconSize.dp),
-                badgeCount = badgeCount,
-                badgeColor = accentColor
-            )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            FluentBadgedBox(badgeCount = badgeCount, badgeColor = accentColor) {
+                InternalAppIcon(
+                    packageName = app.packageName,
+                    modifier    = Modifier.size(iconSize.dp)
+                )
+            }
 
             if (showLabel) {
                 Text(
-                    text = app.label,
-                    fontSize = fontSize.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    text      = app.label,
+                    fontSize  = fontSize.sp,
+                    maxLines  = 1,
+                    overflow  = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
-                    color = smartTextColor,
-                    modifier = Modifier
+                    color     = smartTextColor,
+                    modifier  = Modifier
                         .padding(top = 4.dp)
                         .width((iconSize + 24).dp)
                 )
@@ -449,33 +466,41 @@ private fun AppIconItem(
 
         if (showMenu && !isDragging) {
             FluentContextMenu(
-                app = app,
+                app          = app,
                 iconPosition = itemWindowPos,
-                iconHeight = with(density) { (iconSize + 30).dp.toPx() },
-                iconSize = iconSize,
-                onDismiss = { showMenu = false },
-                isDark = isSystemInDarkTheme(),
-                onPin = { onPinRequest(app); showMenu = false; onClose() },
-                micaParams = micaParams,
+                iconHeight   = with(density) { (iconSize + 30).dp.toPx() },
+                iconSize     = iconSize,
+                onDismiss    = { showMenu = false },
+                isDark       = isSystemInDarkTheme(),
+                // FIX 3 — au lieu d'appeler directement onPinRequest, on déclenche
+                // l'animation de pin. finishedListener appellera onPinRequest quand
+                // le spring sera retombé (≈ 200ms), donnant le feedback visuel.
+                onPin = {
+                    showMenu  = false
+                    isPinning = true
+                },
+                micaParams            = micaParams,
                 isTransparencyEnabled = isTransparencyEnabled
-
             )
         }
     }
 }
 
+// =============================================================================
+// SCROLLBAR
+// =============================================================================
+
 @Composable
 private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifier: Modifier = Modifier) {
     BoxWithConstraints(modifier = modifier) {
         val maxHeight = constraints.maxHeight.toFloat()
-        val scope = rememberCoroutineScope()
+        val scope     = rememberCoroutineScope()
         var isDragging by remember { mutableStateOf(false) }
-        var isActive by remember { mutableStateOf(false) }
+        var isActive   by remember { mutableStateOf(false) }
 
         LaunchedEffect(state.isScrollInProgress, isDragging) {
-            if (state.isScrollInProgress || isDragging) isActive = true else {
-                delay(1500); isActive = false
-            }
+            if (state.isScrollInProgress || isDragging) isActive = true
+            else { delay(1500); isActive = false }
         }
 
         val barAlpha by animateFloatAsState(if (isActive) 1f else 0f, tween(300), label = "alpha")
@@ -487,46 +512,58 @@ private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifie
 
         val scrollProgress by remember {
             derivedStateOf {
-                val total = state.layoutInfo.totalItemsCount
+                val total   = state.layoutInfo.totalItemsCount
                 val visible = state.layoutInfo.visibleItemsInfo
                 if (total == 0 || visible.isEmpty()) 0f
                 else {
                     val first = visible.first()
-                    val pIdx = first.index.toFloat() + (first.offset.y.toFloat() / first.size.height.toFloat()) * -1f
+                    val pIdx  = first.index.toFloat() +
+                            (first.offset.y.toFloat() / first.size.height.toFloat()) * -1f
                     (pIdx / total.toFloat()).coerceIn(0f, 1f)
                 }
             }
         }
 
         val animProgress by animateFloatAsState(
-            if (isDragging) scrollProgress else scrollProgress,
+            scrollProgress,
             if (isDragging) snap() else tween(50),
             label = "p"
         )
         val thumbH = 48.dp
         val thumbY = animProgress * (maxHeight - with(LocalDensity.current) { thumbH.toPx() })
-        val color = if (isDark) Color.White.copy(0.4f) else Color.Black.copy(0.4f)
+        val color    = if (isDark) Color.White.copy(0.4f) else Color.Black.copy(0.4f)
         val actColor = if (isDark) Color.White.copy(0.8f) else Color.Black.copy(0.7f)
 
         if (barAlpha > 0.01f) {
-            Box(Modifier
-                .fillMaxSize()
-                .alpha(barAlpha)
-                .pointerInput(maxHeight) {
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            isDragging = true; isActive = true; scope.launch {
-                            state.scrollToItem(((it.y / maxHeight).coerceIn(0f, 1f) * state.layoutInfo.totalItemsCount).toInt())
-                        }
-                        },
-                        onDragEnd = { isDragging = false }, onDragCancel = { isDragging = false },
-                        onVerticalDrag = { c, _ ->
-                            c.consume(); isActive = true; scope.launch {
-                            state.scrollToItem(((c.position.y / maxHeight).coerceIn(0f, 1f) * state.layoutInfo.totalItemsCount).toInt())
-                        }
-                        }
-                    )
-                }) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .alpha(barAlpha)
+                    .pointerInput(maxHeight) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                isDragging = true; isActive = true
+                                scope.launch {
+                                    state.scrollToItem(
+                                        ((it.y / maxHeight).coerceIn(0f, 1f) *
+                                                state.layoutInfo.totalItemsCount).toInt()
+                                    )
+                                }
+                            },
+                            onDragEnd    = { isDragging = false },
+                            onDragCancel = { isDragging = false },
+                            onVerticalDrag = { c, _ ->
+                                c.consume(); isActive = true
+                                scope.launch {
+                                    state.scrollToItem(
+                                        ((c.position.y / maxHeight).coerceIn(0f, 1f) *
+                                                state.layoutInfo.totalItemsCount).toInt()
+                                    )
+                                }
+                            }
+                        )
+                    }
+            ) {
                 Box(
                     Modifier
                         .offset { IntOffset(0, thumbY.toInt()) }
@@ -540,6 +577,10 @@ private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifie
     }
 }
 
+// =============================================================================
+// GHOST ICON
+// =============================================================================
+
 @Composable
 private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHoveringDelete: Boolean) {
     Box(
@@ -550,7 +591,6 @@ private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHove
     ) {
         InternalAppIcon(
             app.packageName,
-            iconSize,
             Modifier
                 .size(iconSize.dp)
                 .shadow(16.dp, AppIconShape)
@@ -558,11 +598,17 @@ private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHove
     }
 }
 
+// =============================================================================
+// DELETE ZONE
+// =============================================================================
+
 @Composable
 private fun WindowsDeleteZone(isHovering: Boolean, isDark: Boolean) {
-    val bgColor = if (isHovering) Color(0xFFC42B1C) else (if (isDark) Color(0xFF2C2C2C) else Color(0xFFF3F3F3))
-    val contentColor = if (isHovering) Color.White else (if (isDark) Color.White else Color.Black)
-    val scale by animateFloatAsState(if (isHovering) 1.1f else 1f)
+    val bgColor      = if (isHovering) Color(0xFFC42B1C)
+    else if (isDark) Color(0xFF2C2C2C) else Color(0xFFF3F3F3)
+    val contentColor = if (isHovering) Color.White
+    else if (isDark) Color.White      else Color.Black
+    val scale by animateFloatAsState(if (isHovering) 1.1f else 1f, label = "del_scale")
     Row(
         Modifier
             .scale(scale)
@@ -571,63 +617,66 @@ private fun WindowsDeleteZone(isHovering: Boolean, isDark: Boolean) {
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(8.dp)),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment   = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Icon(FluentIcons.Regular.Delete, null, tint = contentColor, modifier = Modifier.size(20.dp)); Spacer(
-        Modifier.width(10.dp)
-    ); Text(
-        "Désinstaller",
-        color = contentColor,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.sp
-    )
+        Icon(FluentIcons.Regular.Delete, null, tint = contentColor, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text("Désinstaller", color = contentColor, fontWeight = FontWeight.Medium, fontSize = 14.sp)
     }
 }
+
+// =============================================================================
+// SECTION HEADER
+// =============================================================================
 
 @Composable
 private fun MicaSectionHeader(letter: Char, isDark: Boolean, micaParams: MicaParams) {
     val smartTextColor = micaParams.primaryColor
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(12.dp), verticalAlignment = Alignment.CenterVertically
+        Modifier.fillMaxWidth().padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Box(contentAlignment = Alignment.Center) {
             Box(
                 Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isDark) Color(0xFF202020).copy(0.3f) else Color.White.copy(0.4f))
+                    .background(
+                        if (isDark) Color(0xFF202020).copy(0.3f)
+                        else Color.White.copy(0.4f)
+                    )
             )
-            Text(
-                letter.toString(),
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = smartTextColor
-            )
+            Text(letter.toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = smartTextColor)
         }
     }
 }
 
+// =============================================================================
+// PAGER INDICATOR
+// =============================================================================
+
 @Composable
 private fun PagerIndicator(
-    pageCount: Int,
+    pageCount:   Int,
     currentPage: Int,
     accentColor: Color,
-    scope: kotlinx.coroutines.CoroutineScope,
-    pagerState: androidx.compose.foundation.pager.PagerState
+    scope:       kotlinx.coroutines.CoroutineScope,
+    pagerState:  androidx.compose.foundation.pager.PagerState
 ) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .height(40.dp)
-            .padding(bottom = 10.dp),
+        Modifier.fillMaxWidth().height(40.dp).padding(bottom = 10.dp),
         horizontalArrangement = Arrangement.Center
     ) {
         repeat(pageCount) { i ->
-            val color = if (currentPage == i) accentColor else Color.Gray.copy(0.5f)
-            val size by animateDpAsState(if (currentPage == i) 8.dp else 6.dp, label = "d")
+            val color by animateColorAsState(
+                if (currentPage == i) accentColor else Color.Gray.copy(0.5f),
+                label = "dot_color"
+            )
+            val size by animateDpAsState(
+                if (currentPage == i) 8.dp else 6.dp,
+                label = "dot_size"
+            )
             Box(
                 Modifier
                     .padding(3.dp)
@@ -635,27 +684,22 @@ private fun PagerIndicator(
                     .clickable { scope.launch { pagerState.animateScrollToPage(i) } },
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    Modifier
-                        .size(size)
-                        .clip(CircleShape)
-                        .background(color)
-                )
+                Box(Modifier.size(size).clip(CircleShape).background(color))
             }
         }
     }
 }
+
+// =============================================================================
+// UTILS
+// =============================================================================
 
 object AppLauncher {
     fun launch(ctx: Context, view: android.view.View?, pkg: String, pos: Offset, sizePx: Int) {
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg) ?: return
         try {
             val opts = if (view != null) ActivityOptions.makeScaleUpAnimation(
-                view,
-                pos.x.toInt(),
-                pos.y.toInt(),
-                sizePx,
-                sizePx
+                view, pos.x.toInt(), pos.y.toInt(), sizePx, sizePx
             ).toBundle() else null
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent, opts)
@@ -664,6 +708,7 @@ object AppLauncher {
         }
     }
 }
+
 object AppGrouper {
     fun groupByAlphabet(apps: List<AppModel>): Map<Char, List<AppModel>> {
         val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }

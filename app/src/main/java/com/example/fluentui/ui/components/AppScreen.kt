@@ -226,7 +226,8 @@ fun AppScreen(
             WallpaperLayer(
                 settings = settingsState,
                 isDark = isDark,
-                scrollProgress = motionProgress
+                scrollProgress = motionProgress,
+                repo = viewModel.wallpaperRepo
             )
 
             Box(

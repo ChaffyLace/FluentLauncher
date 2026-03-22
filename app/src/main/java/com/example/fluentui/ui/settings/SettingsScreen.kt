@@ -1,18 +1,16 @@
 package com.example.fluentui.ui.settings
 
 import androidx.activity.compose.BackHandler
+import android.app.UiModeManager
+import android.content.Context
+import android.os.Build
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,7 +27,7 @@ fun SettingsOverlay(
     allApps: List<AppModel>,
     onDismiss: () -> Unit,
     viewModel: SettingsViewModel = viewModel(),
-    onWallpaperChangeClick: () -> Unit // Correction : minuscule (camelCase)
+    onWallpaperChangeClick: () -> Unit
 ) {
     AnimatedVisibility(
         visible = isVisible,
@@ -42,7 +40,7 @@ fun SettingsOverlay(
             onDismiss = onDismiss,
             viewModel = viewModel,
             allApps = allApps,
-            onOpenGallery = onWallpaperChangeClick // On passe l'action ici pour qu'elle soit utilisée
+            onOpenGallery = onWallpaperChangeClick
         )
     }
 }
@@ -53,7 +51,7 @@ private fun SettingsScreenContent(
     onDismiss: () -> Unit,
     viewModel: SettingsViewModel,
     allApps: List<AppModel>,
-    onOpenGallery: () -> Unit // On reçoit l'action ici
+    onOpenGallery: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsState()
     var currentPage by remember { mutableStateOf(SettingsPageType.HOME) }
@@ -63,15 +61,14 @@ private fun SettingsScreenContent(
         currentPage = SettingsPageType.HOME
     }
 
-    val closeBtnBg = if (isDark) Color.White.copy(0.08f) else Color.Black.copy(0.05f)
-    val iconColor = if (isDark) Color.White else Color(0xFF1D1D1D)
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { }
     ) {
-        // --- FOND ---
         if (state.transparencyEnabled && micaParams != null) {
             MicaSolidBackground(micaParams = micaParams, isDark = isDark)
         } else {
@@ -84,42 +81,41 @@ private fun SettingsScreenContent(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(horizontal = 24.dp)
+                .padding(top = 56.dp, bottom = 16.dp)
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(
-                    onClick = {
-                        if (currentPage == SettingsPageType.HOME) onDismiss()
-                        else currentPage = SettingsPageType.HOME
-                    },
-                    modifier = Modifier.background(closeBtnBg, RoundedCornerShape(8.dp)).size(32.dp)
-                ) {
-                    Icon(
-                        if (currentPage == SettingsPageType.HOME) Icons.Default.Close else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        null, tint = iconColor, modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
             AnimatedContent(
                 targetState = currentPage,
                 label = "SettingsNav",
                 transitionSpec = {
                     if (targetState != SettingsPageType.HOME) {
-                        slideInHorizontally { it / 4 } + fadeIn() togetherWith slideOutHorizontally { -it / 4 } + fadeOut()
+                        slideInHorizontally { it / 4 } + fadeIn() togetherWith
+                                slideOutHorizontally { -it / 4 } + fadeOut()
                     } else {
-                        slideInHorizontally { -it / 4 } + fadeIn() togetherWith slideOutHorizontally { it / 4 } + fadeOut()
+                        slideInHorizontally { -it / 4 } + fadeIn() togetherWith
+                                slideOutHorizontally { it / 4 } + fadeOut()
                     }
                 }
             ) { page ->
                 when (page) {
-                    SettingsPageType.HOME -> HomePage(
-                        state = state,
-                        onNavigate = { currentPage = it },
-                        onSetAccent = viewModel::setAccentColor
-                    )
+                    SettingsPageType.HOME -> {
+                        val context = LocalContext.current
+                        HomePage(
+                            state = state,
+                            onNavigate = { currentPage = it },
+                            onSetAccent = viewModel::setAccentColor,
+                            onSetWallpaper = viewModel::setWallpaper,
+                            onSetDarkMode = { isDark ->
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+                                    uiModeManager.setApplicationNightMode(
+                                        if (isDark) UiModeManager.MODE_NIGHT_YES
+                                        else UiModeManager.MODE_NIGHT_NO
+                                    )
+                                }
+                            }
+                        )
+                    }
                     SettingsPageType.BACKGROUND -> BackgroundPage(
                         state = state,
                         onSetWallpaper = viewModel::setWallpaper,
@@ -148,19 +144,13 @@ private fun SettingsScreenContent(
     }
 }
 
-// --- FOND MICA "SOLIDE" ET COLORÉ ---
 @Composable
 private fun MicaSolidBackground(micaParams: MicaParams, isDark: Boolean) {
     Box(Modifier.fillMaxSize()) {
-        // 1. BASE NEUTRE
         val baseNeutral = if (isDark) Color(0xFF202020) else Color(0xFFEEEEEE)
         Box(Modifier.fillMaxSize().background(baseNeutral))
-
-        // 2. COUCHE DE TEINTE (Tint)
         val tintAlpha = if (isDark) 0.35f else 0.60f
         Box(Modifier.fillMaxSize().background(micaParams.tintBrush, alpha = tintAlpha))
-
-        // 3. BRUIT (Grain)
         micaParams.noiseBrush?.let {
             Box(Modifier.fillMaxSize().background(it, alpha = 0.02f))
         }
