@@ -1,6 +1,8 @@
 package com.example.fluentui.ui.components
 
+import android.app.Activity
 import android.app.Application
+import android.graphics.RuntimeShader
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -35,6 +37,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.fluentui.data.SettingsManager
 import com.example.fluentui.ui.homescreen.DashboardPage
@@ -65,7 +68,7 @@ private const val ACRYLIC_NOISE_SHADER = """
 
 fun Modifier.windowsAcrylicNoise(isTransparencyEnabled: Boolean): Modifier = composed {
     if (isTransparencyEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        val shader = remember { android.graphics.RuntimeShader(ACRYLIC_NOISE_SHADER) }
+        val shader = remember { RuntimeShader(ACRYLIC_NOISE_SHADER) }
         this.drawWithCache {
             shader.setFloatUniform("resolution", size.width, size.height)
             val brush = ShaderBrush(shader)
@@ -332,7 +335,7 @@ fun AppScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 16.dp)
         ) {
             FluentSearchPill(
@@ -356,7 +359,8 @@ fun AppScreen(
                 allApps = allApps,
                 onDismiss = { showSettings = false },
                 viewModel = settingsViewModel,
-                onWallpaperChangeClick = { galleryLauncher.launch("image/*") }
+                onWallpaperChangeClick = { galleryLauncher.launch("image/*") },
+                settingsManager = TODO()
             )
         }
     }
@@ -405,8 +409,8 @@ private fun SystemBarController(isDark: Boolean) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val activity = view.context as? android.app.Activity ?: return@SideEffect
-            androidx.core.view.WindowCompat.getInsetsController(activity.window, view).apply {
+            val activity = view.context as? Activity ?: return@SideEffect
+            WindowCompat.getInsetsController(activity.window, view).apply {
                 isAppearanceLightStatusBars = !isDark
                 isAppearanceLightNavigationBars = !isDark
             }

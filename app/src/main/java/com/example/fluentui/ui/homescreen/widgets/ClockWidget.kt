@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.fluentui.R
 import com.example.fluentui.ui.theme.FluentFontFamily
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
@@ -201,13 +202,18 @@ private fun fetchRealAlarm(context: Context): ClockState.Alarm? {
     val is24h     = DateFormat.is24HourFormat(context)
 
     val timeStr = trigger.format(if (is24h) DATE_FORMATTER_24H else DATE_FORMATTER_12H)
+
+    val todayStr = context.getString(R.string.clock_alarm_today)
+    val tomorrowStr = context.getString(R.string.clock_alarm_tomorrow)
+    val alarmLabelStr = context.getString(R.string.clock_alarm_label)
+
     val label   = when {
-        alarmDate == today             -> "Aujourd'hui"
-        alarmDate == today.plusDays(1) -> "Demain"
+        alarmDate == today             -> todayStr
+        alarmDate == today.plusDays(1) -> tomorrowStr
         else -> trigger.format(ALARM_DATE_PATTERN).replaceFirstChar { it.uppercase() }
     }
 
-    return ClockState.Alarm(timeStr, "Alarme · $label")
+    return ClockState.Alarm(timeStr, "$alarmLabelStr · $label")
 }
 
 private fun getCurrentTime(is24h: Boolean): String =

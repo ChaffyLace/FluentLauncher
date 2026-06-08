@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.example.fluentui.R
 import com.example.fluentui.wallpaper.MicaParams
 import com.example.fluentui.wallpaper.fluentMicaComplex
 import fluent.ui.system.icons.FluentIcons
@@ -143,7 +145,6 @@ fun FluentContextMenu(
     ) {
         Box(
             modifier = Modifier
-                // Padding externe obligatoire pour que la Popup ne coupe pas l'ombre
                 .padding(16.dp)
                 .graphicsLayer {
                     scaleX = scale
@@ -152,21 +153,19 @@ fun FluentContextMenu(
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
                 }
                 .width(260.dp)
-                // OMBRE WINDOWS 11 (Remplace le .shadow natif)
                 .fluentDropShadow(
                     color = Color.Black.copy(alpha = if (isDark) 0.35f else 0.15f),
                     borderRadius = cornerRadius,
                     blurRadius = 16.dp,
-                    offsetY = 8.dp,     // Ombre tirée vers le bas
-                    spread = (-4).dp    // Contractée pour ne pas baver vers le haut
+                    offsetY = 8.dp,
+                    spread = (-4).dp
                 )
-                // FOND MICA OU SOLIDE
                 .then(
                     if (isTransparencyEnabled) {
                         Modifier.fluentMicaComplex(
-                            micaParams = micaParams, // On passe l'objet récupéré de MicaState
+                            micaParams = micaParams,
                             enabled = true,
-                            elevation = 0.dp, // Surtout 0 pour ne pas recréer l'ombre Android par dessus !
+                            elevation = 0.dp,
                             shape = menuShape
                         )
                     } else {
@@ -179,11 +178,11 @@ fun FluentContextMenu(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp) // Marge interne
+                    .padding(vertical = 4.dp)
             ) {
                 ContextMenuItem(
                     icon = FluentIcons.Regular.Pin,
-                    text = "Épingler au menu Démarrer",
+                    text = stringResource(R.string.menu_pin_start),
                     textColor = textColor,
                     iconColor = iconColor,
                     onClick = { onPin(); onDismiss() }
@@ -191,7 +190,7 @@ fun FluentContextMenu(
 
                 ContextMenuItem(
                     icon = FluentIcons.Regular.Info,
-                    text = "À propos de l'appli",
+                    text = stringResource(R.string.menu_app_info),
                     textColor = textColor,
                     iconColor = iconColor,
                     onClick = {
@@ -208,8 +207,8 @@ fun FluentContextMenu(
 
                 ContextMenuItem(
                     icon = FluentIcons.Regular.Delete,
-                    text = "Désinstaller",
-                    textColor = Color(0xFFE53935), // Rouge Windows Destructif
+                    text = stringResource(R.string.menu_uninstall_app),
+                    textColor = Color(0xFFE53935),
                     iconColor = Color(0xFFE53935),
                     onClick = {
                         AppActions.uninstallApp(context, app.packageName)

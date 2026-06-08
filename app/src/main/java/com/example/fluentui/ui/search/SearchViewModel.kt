@@ -1,3 +1,10 @@
+/**
+ * @file SearchViewModel.kt
+ * @description State management for the Mica Search System.
+ * Handles debounced search queries, history persistence, and telemetry.
+ * Engineering Note: Fully localized fallback for web searches.
+ */
+
 package com.example.fluentui.ui.search
 
 import android.app.Application
@@ -7,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.fluentui.R
 import com.example.fluentui.ui.components.AppModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -16,7 +24,6 @@ import kotlinx.coroutines.withContext
 
 /**
  * UI State for the Search Screen.
- * Professional Note: Now includes dynamic recent searches and actual top apps.
  */
 data class SearchUiState(
     val query: String = "",
@@ -30,14 +37,9 @@ data class SearchUiState(
  * ==============================================================================
  * SEARCH HISTORY & TELEMETRY MANAGER
  * ==============================================================================
- * Engineering Note: Handles local persistence for user habits (Queries & App usage).
- * Operates purely on SharedPreferences to avoid the overhead of a Room Database
- * for simple key-value tracking.
  */
 class SearchHistoryManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("search_history_prefs", Context.MODE_PRIVATE)
-
-    // Limit the number of recent searches to prevent UI clutter
     private val MAX_RECENT_SEARCHES = 10
 
     fun getRecentSearches(): List<String> {
@@ -50,8 +52,8 @@ class SearchHistoryManager(context: Context) {
         if (trimmed.length < 2) return
 
         val currentList = getRecentSearches().toMutableList()
-        currentList.remove(trimmed) // Remove if exists to push it to the top
-        currentList.add(0, trimmed) // Add to front
+        currentList.remove(trimmed)
+        currentList.add(0, trimmed)
 
         val newList = currentList.take(MAX_RECENT_SEARCHES).joinToString("|||")
         prefs.edit().putString("recent_queries", newList).apply()
@@ -70,7 +72,7 @@ class SearchHistoryManager(context: Context) {
 }
 
 /**
- * SearchViewModel handles the business logic for the Mica Search System.
+ * ViewModel implementation for Fluent Search.
  */
 @OptIn(FlowPreview::class)
 class SearchViewModel(
@@ -85,7 +87,6 @@ class SearchViewModel(
     private var cachedApps: List<AppModel> = emptyList()
 
     init {
-        // Load initial data (Zero-State)
         loadZeroStateData()
 
         viewModelScope.launch {
@@ -97,9 +98,7 @@ class SearchViewModel(
                     if (query.length >= 2) {
                         performSearch(query)
                     } else {
-                        _uiState.update {
-                            it.copy(results = emptyList(), isLoading = false)
-                        }
+                        _uiState.update { it.copy(results = emptyList(), isLoading = false) }
                     }
                 }
         }
@@ -115,7 +114,6 @@ class SearchViewModel(
 
     fun updateApps(apps: List<AppModel>) {
         this.cachedApps = apps
-        // Refresh top apps now that we have the full list
         loadZeroStateData()
     }
 
@@ -123,23 +121,16 @@ class SearchViewModel(
         _uiState.update { it.copy(query = newQuery, isLoading = true) }
     }
 
-    /**
-     * Registers an app launch to update the "Top Apps" ranking.
-     * Also saves the current query if it led to an app launch.
-     */
     fun onAppLaunched(packageName: String, currentQuery: String) {
         viewModelScope.launch(Dispatchers.IO) {
             historyManager.trackAppLaunch(packageName)
             if (currentQuery.isNotEmpty()) {
                 historyManager.addRecentSearch(currentQuery)
             }
-            loadZeroStateData() // Refresh UI state silently
+            loadZeroStateData()
         }
     }
 
-    /**
-     * Registers a non-app action (like opening a file or setting) to save the query.
-     */
     fun onActionExecuted(currentQuery: String) {
         if (currentQuery.isNotEmpty()) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -160,27 +151,31 @@ class SearchViewModel(
 
                 val hasPriorityResult = results.any { it.strategyPriority >= 95 }
                 val finalResults = if (!hasPriorityResult) {
-                    results + SearchResult(
-                        id = "web",
-                        title = "Rechercher \"$query\"",
-                        subtitle = "Google Search",
-                        type = ResultType.WEB,
-                        iconData = null,
-                        intentData = query,
-                        score = 5.0,
-                        strategyPriority = 0
-                    )
+                    results + createWebSearchResult(query)
                 } else results
 
-                _uiState.update {
-                    it.copy(results = finalResults, isLoading = false)
-                }
+                _uiState.update { it.copy(results = finalResults, isLoading = false) }
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(results = emptyList(), isLoading = false)
-                }
+                _uiState.update { it.copy(results = emptyList(), isLoading = false) }
             }
         }
+    }
+
+    /**
+     * Helper to create a localized Web Search result.
+     */
+    private fun createWebSearchResult(query: String): SearchResult {
+        val app = getApplication<Application>()
+        return SearchResult(
+            id = "web",
+            title = app.getString(R.string.search_web_query, query), // Traduit dynamiquement
+            subtitle = app.getString(R.string.search_web_provider), // Traduit
+            type = ResultType.WEB,
+            iconData = null,
+            intentData = query,
+            score = 5.0,
+            strategyPriority = 0
+        )
     }
 
     class Factory(private val app: Application) : ViewModelProvider.Factory {
@@ -202,7 +197,6 @@ class SearchViewModel(
             )
 
             val repo = SearchRepository(strategies, cache)
-
             return SearchViewModel(app, repo, historyManager) as T
         }
     }

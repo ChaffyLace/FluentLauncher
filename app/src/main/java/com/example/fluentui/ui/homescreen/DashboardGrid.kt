@@ -1,5 +1,14 @@
+/**
+ * @file HomeScreen.kt
+ * @description Core dashboard UI for the launcher.
+ * Manages the grid layout, drag-and-drop mechanics, Live Tiles,
+ * and deep system gesture integrations via NestedScroll.
+ * Integrates the ActionCenterOverlay at the root presentation layer.
+ */
+
 package com.example.fluentui.ui.homescreen
 
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -36,19 +45,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.example.fluentui.R
 import com.example.fluentui.ui.components.AppViewModel
 import com.example.fluentui.ui.motion.FluentDashboardMotion
 import com.example.fluentui.ui.motion.FluentMotion
 import com.example.fluentui.ui.motion.FluentTile
+import com.example.fluentui.ui.system.SystemInteractionManager
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.ui.system.TileType
@@ -67,7 +82,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // =============================================================================
-// CONSTANTS
+// CONSTANTS & UTILS
 // =============================================================================
 
 private const val COLUMNS               = 6
@@ -82,17 +97,20 @@ private const val LAUNCH_RESET_MS       = 500L
 private const val DRAG_THRESHOLD_PX     = 15f
 private const val SCROLL_TRIGGER_PX     = 150f
 private const val SCROLL_STEP_PX        = 35f
+private const val SWIPE_DOWN_THRESHOLD  = 100f
 
 private val PACKAGE_NAME_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$")
 private fun String.isSafePackageName() = PACKAGE_NAME_REGEX.matches(this)
 
-/** Détermine si une tuile peut avoir un contenu Live Tile.
- *  Doit rester en sync avec TileContentDispatcher. */
+/**
+ * Checks if a tile is eligible for dynamic content transformation.
+ */
 private fun TileConfig.hasDynamicContent(): Boolean {
     val pkg = packageName.lowercase()
     return type == TileType.PHOTO    ||
             type == TileType.MEDIA    ||
             type == TileType.CALENDAR ||
+            type == TileType.WEATHER  ||
             type == TileType.CLOCK    ||
             type == TileType.WIDGET   ||
             pkg.contains("spotify")  ||
@@ -104,7 +122,7 @@ private fun TileConfig.hasDynamicContent(): Boolean {
 }
 
 // =============================================================================
-// DATA MODELS
+// GRID LAYOUT MANAGER (Core Logic)
 // =============================================================================
 
 internal data class GridPosition(val col: Int, val row: Int) {
@@ -129,10 +147,6 @@ private var TileConfig.gridPosition: GridPosition
     get()      = GridPosition(gridX, gridY)
     set(value) { gridX = value.col; gridY = value.row }
 
-// =============================================================================
-// GRID LAYOUT MANAGER
-// =============================================================================
-
 internal object GridLayoutManager {
 
     fun colSpan(size: TileSize): Int = when (size) {
@@ -149,6 +163,9 @@ internal object GridLayoutManager {
         TileSize.LARGE  -> 4
     }
 
+    /**
+     * Calculates pixel dimensions for the grid based on available screen width.
+     */
     fun buildMetrics(containerWidthPx: Int, paddingPx: Int, spacingPx: Int): GridMetrics? {
         if (containerWidthPx == 0) return null
         val usable = containerWidthPx - paddingPx * 2 - spacingPx * (COLUMNS - 1)
@@ -156,6 +173,9 @@ internal object GridLayoutManager {
         return GridMetrics(usable / COLUMNS, spacingPx, paddingPx, COLUMNS, ROWS)
     }
 
+    /**
+     * Maps a grid coordinate to absolute pixel positions.
+     */
     fun pixelPosition(tile: TileConfig, m: GridMetrics): TilePixelPosition {
         val step = m.cellSizePx + m.spacingPx
         val cols = colSpan(tile.size)
@@ -202,6 +222,9 @@ internal object GridLayoutManager {
         }
     }
 
+    /**
+     * Finds the nearest empty slot to avoid tile overlapping.
+     */
     fun findFreeSlotNear(
         tile: TileConfig,
         preferredRow: Int,
@@ -230,6 +253,9 @@ internal object GridLayoutManager {
         return null
     }
 
+    /**
+     * Core collision resolver: Pushes tiles away when an anchor moves or resizes.
+     */
     fun resolveCollisions(
         anchorId: String,
         anchorX: Int, anchorY: Int, anchorW: Int, anchorH: Int,
@@ -310,64 +336,67 @@ internal object GridLayoutManager {
 }
 
 // =============================================================================
-// DASHBOARD PAGE
+// MAIN DASHBOARD COMPONENT
 // =============================================================================
 
+@SuppressLint("LocalContextGetResourceValueCall")
 @Composable
 fun DashboardPage(viewModel: AppViewModel) {
-    val context        = LocalContext.current
-    val scope          = rememberCoroutineScope()
+    val context          = LocalContext.current
+    val scope            = rememberCoroutineScope()
     var launchingTileId by remember { mutableStateOf<String?>(null) }
     val micaParams      by viewModel.micaParams.collectAsState()
     val tiles           = viewModel.dashboardTiles.toList()
     val isDark          = isSystemInDarkTheme()
 
+    // Action Center global state references
+    val showActionCenter by viewModel.isActionCenterOpen.collectAsState()
+    val accentColor      by viewModel.accentColor.collectAsState()
+
     LaunchedEffect(isDark) {
         viewModel.refreshWallpaperVisuals(isDarkOverride = isDark)
     }
 
-    FluentDashboardMotion(isAppLaunching = launchingTileId != null) {
-        Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-            DashboardGrid(
-                tiles           = tiles,
-                micaParams      = micaParams,
-                isDark          = isDark,
-                viewModel       = viewModel,
-                launchingTileId = launchingTileId,
-                onTileClick     = { tile ->
-                    when {
-                        tile.type == TileType.PHOTO -> Unit
+    Box(modifier = Modifier.fillMaxSize()) {
+        FluentDashboardMotion(isAppLaunching = launchingTileId != null) {
+            Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+                DashboardGrid(
+                    tiles           = tiles,
+                    micaParams      = micaParams,
+                    isDark          = isDark,
+                    viewModel       = viewModel,
+                    launchingTileId = launchingTileId,
+                    onTileClick     = { tile ->
+                        when {
+                            tile.type == TileType.PHOTO -> Unit
 
-                        tile.type == TileType.APPLICATION
-                                && launchingTileId == null
-                                && tile.packageName.isSafePackageName() -> {
-                            val intent = context.packageManager
-                                .getLaunchIntentForPackage(tile.packageName)
-                            if (intent != null) {
-                                launchingTileId = tile.id
-                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                scope.launch {
-                                    delay(LAUNCH_DELAY_MS)
-                                    context.startActivity(intent)
-                                    delay(LAUNCH_RESET_MS)
-                                    launchingTileId = null
+                            tile.type == TileType.APPLICATION
+                                    && launchingTileId == null
+                                    && tile.packageName.isSafePackageName() -> {
+                                val intent = context.packageManager
+                                    .getLaunchIntentForPackage(tile.packageName)
+                                if (intent != null) {
+                                    launchingTileId = tile.id
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    scope.launch {
+                                        delay(LAUNCH_DELAY_MS)
+                                        context.startActivity(intent)
+                                        delay(LAUNCH_RESET_MS)
+                                        launchingTileId = null
+                                    }
+                                } else {
+                                    Toast.makeText(context, context.getString(R.string.hs_err_not_found), Toast.LENGTH_SHORT).show()
                                 }
-                            } else {
-                                Toast.makeText(context, "App not found", Toast.LENGTH_SHORT).show()
                             }
-                        }
 
-                        else -> Unit
+                            else -> Unit
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
 }
-
-// =============================================================================
-// DASHBOARD GRID
-// =============================================================================
 
 @Composable
 fun DashboardGrid(
@@ -378,6 +407,7 @@ fun DashboardGrid(
     launchingTileId: String?  = null,
     onTileClick:     (TileConfig) -> Unit
 ) {
+    val context  = LocalContext.current
     val density  = LocalDensity.current
     val haptics  = rememberHaptics()
     val scope    = rememberCoroutineScope()
@@ -417,6 +447,7 @@ fun DashboardGrid(
         }
     }
 
+    // Auto-placement for new tiles
     LaunchedEffect(currentTiles, gridMetrics) {
         val m = gridMetrics ?: return@LaunchedEffect
         if (isDragging) return@LaunchedEffect
@@ -449,10 +480,34 @@ fun DashboardGrid(
 
     val scrollState = rememberScrollState()
 
+    val swipeDownEnabled by viewModel.swipeDownEnabled.collectAsState(initial = true)
+
+    // Handling Swipe Down gesture for system integrations
+    val nestedScrollConnection = remember(swipeDownEnabled) {
+        object : NestedScrollConnection {
+            var accumulatedSwipe = 0f
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (swipeDownEnabled && available.y > 0 && scrollState.value == 0) {
+                    accumulatedSwipe += available.y
+                    if (accumulatedSwipe > SWIPE_DOWN_THRESHOLD) {
+                        viewModel.toggleActionCenter(true)
+                        accumulatedSwipe = 0f
+                        return available
+                    }
+                } else {
+                    accumulatedSwipe = 0f
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { containerWidthPx = it.width; containerHeightPx = it.height }
+            .nestedScroll(nestedScrollConnection)
             .verticalScroll(scrollState, enabled = !isDragging)
             .padding(top = TOP_PADDING, bottom = BOTTOM_PADDING)
     ) {
@@ -478,17 +533,17 @@ fun DashboardGrid(
                 val tilePos = tilePositions[tile.id] ?: return@forEach
                 key(tile.id) {
                     DashboardTile(
-                        tile              = tile,
-                        tilePos           = tilePos,
-                        isNewlyPinned     = tile.id in (newlyPinnedIds.value),
-                        dragStartPos      = if (tile.id == draggingTileId) draggingStartPos else null,
-                        isDragging        = tile.id == draggingTileId,
-                        isLaunching       = launchingTileId == tile.id,
+                        tile               = tile,
+                        tilePos            = tilePos,
+                        isNewlyPinned      = tile.id in (newlyPinnedIds.value),
+                        dragStartPos       = if (tile.id == draggingTileId) draggingStartPos else null,
+                        isDragging         = tile.id == draggingTileId,
+                        isLaunching        = launchingTileId == tile.id,
                         dragOffsetProvider = { dragOffset },
-                        micaParams        = micaParams,
-                        isDark            = isDark,
-                        viewModel         = viewModel,
-                        onTap             = { if (!isDragging) onTileClick(tile) },
+                        micaParams         = micaParams,
+                        isDark             = isDark,
+                        viewModel          = viewModel,
+                        onTap              = { if (!isDragging) onTileClick(tile) },
 
                         onResizeTile = { newSize ->
                             val metrics = gridMetrics ?: return@DashboardTile
@@ -536,6 +591,7 @@ fun DashboardGrid(
                                 haptics.performTick()
                             }
 
+                            // Auto-scrolling logic while dragging
                             val visualTop    = startPx.y + dragOffset.y - scrollState.value
                             val visualBottom = visualTop + startPx.height
                             val scrollDir = when {
@@ -691,7 +747,7 @@ private fun FluentResizeRow(
 }
 
 // =============================================================================
-// DASHBOARD TILE
+// DASHBOARD TILE (Individual Tile Logic)
 // =============================================================================
 
 @Composable
@@ -807,6 +863,7 @@ private fun DashboardTile(
         label         = "z_${tile.id}"
     )
 
+    @SuppressLint("LocalContextGetResourceValueCall")
     fun openAppSettings() {
         if (!tile.packageName.isSafePackageName()) return
         try {
@@ -817,10 +874,11 @@ private fun DashboardTile(
                 }
             )
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(context, "Impossible d'ouvrir les paramètres", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.hs_err_settings), Toast.LENGTH_SHORT).show()
         }
     }
 
+    @SuppressLint("LocalContextGetResourceValueCall")
     fun uninstallApp() {
         if (!tile.packageName.isSafePackageName()) return
         try {
@@ -831,7 +889,7 @@ private fun DashboardTile(
                 }
             )
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(context, "Impossible de désinstaller", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.hs_err_uninstall), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -940,7 +998,7 @@ private fun DashboardTile(
             )
         }
 
-        // ── Context menu ──────────────────────────────────────────────────────
+        // Context menu execution block
         val menuShape         = RoundedCornerShape(12.dp)
         val solidWindowsColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFAFAFA)
         val borderColor       = if (isDark) Color.White.copy(0.12f) else Color.Black.copy(0.08f)
@@ -973,7 +1031,7 @@ private fun DashboardTile(
                 val textColor = if (isDark) Color.White else Color.Black
 
                 FluentAnimatedMenuItem(
-                    text  = "Désépingler",
+                    text  = stringResource(R.string.hs_unpin),
                     icon  = FluentIcons.Regular.PinOff,
                     color = textColor,
                     onClick = {
@@ -983,11 +1041,10 @@ private fun DashboardTile(
                     }
                 )
 
-                // Live Tile — uniquement si un widget dynamique existe
                 if (tile.hasDynamicContent()) {
                     FluentAnimatedMenuItem(
-                        text  = if (tile.isDynamic) "Désactiver la tuile dynamique"
-                        else "Activer la tuile dynamique",
+                        text  = if (tile.isDynamic) stringResource(R.string.hs_dynamic_off)
+                        else stringResource(R.string.hs_dynamic_on),
                         icon  = FluentIcons.Regular.StarEmphasis,
                         color = textColor,
                         onClick = {
@@ -999,13 +1056,13 @@ private fun DashboardTile(
 
                 if (tile.packageName.isSafePackageName()) {
                     FluentAnimatedMenuItem(
-                        text  = "Infos sur l'application",
+                        text  = stringResource(R.string.hs_app_info),
                         icon  = FluentIcons.Regular.Info,
                         color = textColor,
                         onClick = { showMenu = false; openAppSettings() }
                     )
                     FluentAnimatedMenuItem(
-                        text  = "Désinstaller",
+                        text  = stringResource(R.string.hs_uninstall),
                         icon  = FluentIcons.Regular.Delete,
                         color = Color(0xFFE53935),
                         onClick = { showMenu = false; uninstallApp() }
@@ -1018,7 +1075,7 @@ private fun DashboardTile(
                 )
 
                 Text(
-                    text       = "Redimensionner",
+                    text       = stringResource(R.string.hs_resize),
                     color      = textColor.copy(0.5f),
                     fontSize   = 11.sp,
                     fontWeight = FontWeight.Bold,

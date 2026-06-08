@@ -1,16 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         Theme principal du launcher
+         ──────────────────────────────────────────────────────────────────── -->
     <style name="Theme.FluentUI" parent="android:Theme.Material.Light.NoActionBar">
 
+        <!-- Edge-to-edge : barres système transparentes -->
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
 
+        <!-- Wallpaper visible derrière le launcher -->
         <item name="android:windowShowWallpaper">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
-        <item name="android:windowIsTranslucent">true</item>
 
+        <!-- Pas d'animation d'ouverture/fermeture (feel "launcher") -->
         <item name="android:windowAnimationStyle">@null</item>
+
+        <!-- Splash screen noir (évite le flash blanc au démarrage) -->
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
     </style>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         Theme transparent (overlays, dialogs custom, etc.)
+         ──────────────────────────────────────────────────────────────────── -->
+    <style name="Theme.FluentUI.Transparent" parent="Theme.FluentUI">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
 </resources>

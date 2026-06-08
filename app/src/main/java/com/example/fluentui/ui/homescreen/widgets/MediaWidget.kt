@@ -9,14 +9,13 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.util.Log
 import androidx.compose.animation.AnimatedContent
-import com.example.fluentui.ui.motion.FluentMotion
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,10 +34,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.fluentui.R
+import com.example.fluentui.ui.motion.FluentMotion
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import fluent.ui.system.icons.FluentIcons
@@ -55,7 +57,7 @@ private const val TAG = "MediaWidget"
 // CONSTANTS
 // ============================================================================
 
-/** États acceptés pour qu'un widget reste affiché. La pause ne fait pas disparaître. */
+/** Accepted states for a widget to remain visible. Pausing does not dismiss it. */
 private val ACTIVE_STATES = setOf(
     PlaybackState.STATE_PLAYING,
     PlaybackState.STATE_PAUSED,
@@ -63,7 +65,7 @@ private val ACTIVE_STATES = setOf(
     PlaybackState.STATE_CONNECTING
 )
 
-/** Intervalle de poll — 500ms pour un play/pause réactif sans surcharger le CPU. */
+/** Polling interval — 500ms for a reactive play/pause without overloading the CPU. */
 private const val POLL_INTERVAL_MS = 500L
 
 // ============================================================================
@@ -71,14 +73,14 @@ private const val POLL_INTERVAL_MS = 500L
 // ============================================================================
 
 /**
- * État immutable du lecteur.
+ * Immutable player state.
  *
- * [hasSession] = true tant qu'une session existe pour l'app cible, qu'elle joue ou soit
- * en pause. Seule l'absence de session remet le widget en mode "icône normale".
+ * [hasSession] = true as long as a session exists for the target app, whether playing or paused.
+ * Only the absence of a session reverts the widget to a "normal icon" mode.
  *
- * [albumArt] est EXCLU de [visualKey] : Android recrée un Bitmap object à chaque
- * getBitmap() même pour la même image, donc son hashCode change à chaque poll
- * et déclencherait AnimatedContent toutes les 500ms → flash constant.
+ * [albumArt] is EXCLUDED from [visualKey]: Android recreates a Bitmap object on every
+ * getBitmap() even for the same image, so its hashCode changes on every poll
+ * and would trigger AnimatedContent every 500ms -> constant flashing.
  */
 private data class MediaState(
     val title:      String  = "",
@@ -93,17 +95,17 @@ private data class MediaState(
 }
 
 // ============================================================================
-// DATA LAYER  —  pas de suspend, appelé depuis LaunchedEffect(IO implicite)
+// DATA LAYER  —  no suspend, called from LaunchedEffect(implicit IO)
 // ============================================================================
 
 /**
- * Résout le contrôleur approprié selon le package cible.
+ * Resolves the appropriate controller based on the target package.
  *
- * - [targetPackage] non vide → filtre strict sur l'app épinglée.
- *   Spotify n'affecte jamais Samsung Music et inversement.
- * - [targetPackage] vide → première session dans un état actif.
+ * - [targetPackage] not empty -> strict filter on the pinned app.
+ * Spotify never affects Samsung Music and vice versa.
+ * - [targetPackage] empty -> first session in an active state.
  *
- * Priorité : STATE_PLAYING > STATE_PAUSED/autres dans les deux modes.
+ * Priority: STATE_PLAYING > STATE_PAUSED/others in both modes.
  */
 private fun resolveController(context: Context, targetPackage: String): MediaController? {
     return runCatching {
@@ -117,10 +119,10 @@ private fun resolveController(context: Context, targetPackage: String): MediaCon
             .filter { it.playbackState?.state in ACTIVE_STATES }
 
         if (targetPackage.isNotBlank()) {
-            // Mode exclusif — uniquement le package de la tuile
+            // Exclusive mode — only the tile's package
             sessions.firstOrNull { it.packageName == targetPackage }
         } else {
-            // Mode général — priorité à ce qui joue
+            // General mode — priority to what is currently playing
             sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
                 ?: sessions.firstOrNull()
         }
@@ -158,8 +160,8 @@ private fun readMediaState(context: Context, targetPackage: String): MediaState 
 }
 
 /**
- * Envoie une commande de transport.
- * Silencieux en cas d'erreur — ne doit jamais crasher l'UI.
+ * Sends a transport command.
+ * Fails silently — must never crash the UI.
  */
 private fun sendAction(context: Context, targetPackage: String, action: Long) {
     runCatching {
@@ -175,7 +177,7 @@ private fun sendAction(context: Context, targetPackage: String, action: Long) {
 }
 
 // ============================================================================
-// WIDGET PRINCIPAL
+// MAIN WIDGET
 // ============================================================================
 
 @Composable
@@ -186,12 +188,12 @@ fun MediaWidget(
     modifier:     Modifier = Modifier
 ) {
     val context       = LocalContext.current
-    val targetPackage = config.packageName  // vide = mode général
+    val targetPackage = config.packageName  // empty = general mode
 
-    // ── State granulaire ──────────────────────────────────────────────────────
-    // Chaque champ est un State séparé plutôt qu'un seul objet.
-    // Avantage : Compose ne recompose que les composants qui lisent le champ
-    // qui a changé. isPlaying qui toggle ne recompose pas le titre.
+    // ── Granular State ────────────────────────────────────────────────────────
+    // Each field is a separate State rather than a single object.
+    // Advantage: Compose only recomposes components that read the changed field.
+    // Toggling isPlaying does not recompose the title.
     var title      by remember { mutableStateOf("") }
     var artist     by remember { mutableStateOf("") }
     var appName    by remember { mutableStateOf("") }
@@ -199,8 +201,8 @@ fun MediaWidget(
     var albumArt   by remember { mutableStateOf<Bitmap?>(null) }
     var isPlaying  by remember { mutableStateOf(false) }
     var hasSession by remember { mutableStateOf(false) }
-    // Dernier titre connu — albumArt n'est rechargé que lors d'un changement de chanson,
-    // jamais à chaque poll (évite le flash lié à la recréation du Bitmap object)
+    // Last known title — albumArt is only reloaded upon song change,
+    // never on every poll (prevents flash related to Bitmap object recreation)
     var lastTitle  by remember { mutableStateOf("") }
 
     LaunchedEffect(targetPackage) {
@@ -212,18 +214,18 @@ fun MediaWidget(
             appName    = s.appName
             appColor   = s.appColor
 
-            // Recharge albumArt si :
-            // - la chanson a changé (nouveau titre)
-            // - ou albumArt est null alors qu'on a une pochette disponible
-            //   (cas du démarrage à froid où lastTitle="" = title="" au premier tick)
+            // Reload albumArt if:
+            // - the song changed (new title)
+            // - or albumArt is null while we have a cover available
+            //   (cold start case where lastTitle="" = title="" on first tick)
             if (s.title != lastTitle || (albumArt == null && s.albumArt != null)) {
                 albumArt  = s.albumArt
                 lastTitle = s.title
             }
 
-            // title/artist en dernier : leur changement déclenche AnimatedContent
-            // après que albumArt est déjà synchronisé → pas de frame où l'image
-            // est en retard par rapport au texte
+            // title/artist last: their change triggers AnimatedContent
+            // after albumArt is already synchronized -> no frame where the image
+            // lags behind the text
             title  = s.title
             artist = s.artist
 
@@ -232,13 +234,13 @@ fun MediaWidget(
     }
 
     // ── Routing ───────────────────────────────────────────────────────────────
-    // showPlayer : démarre à false dès qu'une session apparaît,
-    // passe à true après l'animation d'entrée — ne rebascule jamais.
+    // showPlayer: starts at false as soon as a session appears,
+    // switches to true after entrance animation — never switches back.
     var showPlayer by remember { mutableStateOf(false) }
     LaunchedEffect(hasSession) {
         if (hasSession && !showPlayer) {
-            // 2.5s sur l'icône avant de déclencher l'animation
-            // — laisse le temps à l'utilisateur de voir que c'est Spotify qui joue
+            // 2.5s on the icon before triggering the animation
+            // — gives the user time to see that Spotify is playing
             delay(2_500L)
             showPlayer = true
         } else if (!hasSession) {
@@ -246,8 +248,8 @@ fun MediaWidget(
         }
     }
 
-    // Animation slide Windows — une seule fois au lancement de la musique.
-    // tween avec FastOutSlowInEasing = décélération fluide, pas de saccade.
+    // Windows slide animation — once per music launch.
+    // tween with FastOutSlowInEasing = fluid deceleration, no stutter.
     AnimatedContent(
         targetState  = showPlayer,
         transitionSpec = {
@@ -263,10 +265,10 @@ fun MediaWidget(
         modifier = modifier.fillMaxSize()
     ) { isPlayer ->
         if (!isPlayer) {
-            // Icône normale — visible brièvement au lancement
+            // Normal icon — briefly visible on launch
             StandardAppTile(config = config, contentColor = contentColor)
         } else {
-            // Lecteur — reste affiché tant que la session est active
+            // Player — remains visible as long as the session is active
             AnimatedContent(
                 targetState  = "$title|$artist|$isPlaying",
                 transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
@@ -286,7 +288,7 @@ fun MediaWidget(
 }
 
 // ============================================================================
-// TINY (1×1) — pochette fond + point couleur app
+// TINY (1x1) — Background cover + app color dot
 // ============================================================================
 
 @Composable
@@ -310,7 +312,7 @@ private fun TinyLayout(albumArt: Bitmap?, appColor: Color) {
 }
 
 // ============================================================================
-// SMALL (2×2) — pochette fond · info bas-gauche · play bas-droite
+// SMALL (2x2) — Background cover · info bottom-left · play bottom-right
 // ============================================================================
 
 @Composable
@@ -325,11 +327,11 @@ private fun SmallLayout(
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0xFF1C1C1C))
     ) {
-        // Pochette plein fond
+        // Full background cover
         if (albumArt != null) {
             Image(albumArt.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        // Dégradé subtil uniquement en bas pour le bouton
+        // Subtle gradient only at the bottom for the button
         Box(Modifier.fillMaxSize().background(
             Brush.verticalGradient(
                 0.5f to Color.Transparent,
@@ -337,7 +339,7 @@ private fun SmallLayout(
             )
         ))
 
-        // Play/Pause centré en bas — aucun texte, la pochette suffit
+        // Centered Play/Pause at the bottom — no text, cover is enough
         MediaButton(
             isPlaying = isPlaying,
             size      = 36.dp,
@@ -349,7 +351,7 @@ private fun SmallLayout(
 }
 
 // ============================================================================
-// MEDIUM (4×2) — texte gauche · play droite · pochette fond dégradé horiz.
+// MEDIUM (4x2) — Text left · play right · background cover horiz gradient
 // ============================================================================
 
 @Composable
@@ -367,7 +369,7 @@ private fun MediumLayout(
         if (albumArt != null) {
             Image(albumArt.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        // Dégradé horizontal — texte lisible à gauche, pochette visible à droite
+        // Horizontal gradient — text readable on left, cover visible on right
         Box(Modifier.fillMaxSize().background(
             Brush.horizontalGradient(listOf(Color.Black.copy(0.92f), Color.Black.copy(0.18f)))
         ))
@@ -384,7 +386,7 @@ private fun MediumLayout(
 
             Spacer(Modifier.width(12.dp))
 
-            // Play/Pause uniquement — prev/next réservés à LARGE
+            // Play/Pause only — prev/next reserved for LARGE
             MediaButton(
                 isPlaying = isPlaying,
                 size      = 44.dp,
@@ -396,7 +398,7 @@ private fun MediumLayout(
 }
 
 // ============================================================================
-// LARGE (4×4) — header · pochette + info · prev/play/next
+// LARGE (4x4) — Header · cover + info · prev/play/next
 // ============================================================================
 
 @Composable
@@ -424,8 +426,8 @@ private fun LargeLayout(
         ) {
 
 
-            // ── Pochette gauche (compact) + titre/artiste droite ─────────────
-            // Pochette réduite à 64dp pour laisser de la place au texte
+            // ── Left cover (compact) + right title/artist ─────────────
+            // Cover reduced to 64dp to leave room for text
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -464,13 +466,13 @@ private fun LargeLayout(
                 }
             }
 
-            // ── Contrôles ─────────────────────────────────────────────────────
+            // ── Controls ─────────────────────────────────────────────────────
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
-                // Précédent — mini
+                // Previous — mini
                 IconButton(
                     onClick  = { sendAction(context, pkg, PlaybackState.ACTION_SKIP_TO_PREVIOUS) },
                     modifier = Modifier.size(32.dp)
@@ -480,7 +482,7 @@ private fun LargeLayout(
 
                 Spacer(Modifier.width(16.dp))
 
-                // Play/Pause principal
+                // Main Play/Pause
                 Box(
                     modifier         = Modifier.size(52.dp).clip(CircleShape).background(Color.White),
                     contentAlignment = Alignment.Center
@@ -498,7 +500,7 @@ private fun LargeLayout(
 
                 Spacer(Modifier.width(16.dp))
 
-                // Suivant — mini
+                // Next — mini
                 IconButton(
                     onClick  = { sendAction(context, pkg, PlaybackState.ACTION_SKIP_TO_NEXT) },
                     modifier = Modifier.size(32.dp)
@@ -511,7 +513,7 @@ private fun LargeLayout(
 }
 
 // ============================================================================
-// COMPOSANT ATOMIQUE — bouton play/pause réutilisé dans SMALL et MEDIUM
+// ATOMIC COMPONENT — play/pause button reused in SMALL and MEDIUM
 // ============================================================================
 
 @Composable
@@ -530,7 +532,7 @@ private fun MediaButton(
         contentAlignment = Alignment.Center
     ) {
         IconButton(onClick = onClick, modifier = Modifier.fillMaxSize()) {
-            // AnimatedContent sur l'état play/pause — transition fluide de l'icône
+            // AnimatedContent on play/pause state — fluid transition of the icon
             AnimatedContent(
                 targetState  = isPlaying,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
@@ -538,7 +540,7 @@ private fun MediaButton(
             ) { playing ->
                 Icon(
                     imageVector        = if (playing) FluentIcons.Regular.Pause else FluentIcons.Regular.Play,
-                    contentDescription = if (playing) "Pause" else "Lecture",
+                    contentDescription = if (playing) stringResource(R.string.media_cd_pause) else stringResource(R.string.media_cd_play),
                     modifier           = Modifier.size(iconSize),
                     tint               = Color.White
                 )

@@ -25,6 +25,7 @@ import com.example.fluentui.ui.system.TileType
 import com.example.fluentui.wallpaper.MicaParams
 import com.example.fluentui.wallpaper.fluentMicaComplex
 import com.example.fluentui.ui.homescreen.widgets.TileContentDispatcher
+import com.example.fluentui.wallpaper.MicaState.micaParams
 
 @Composable
 fun MicaTile(
@@ -37,10 +38,9 @@ fun MicaTile(
     isPressed: Boolean = false
 ) {
     val cornerRadius = 16.dp
-    val borderWidth = 1.dp
-
-    val outerShape = RoundedCornerShape(cornerRadius)
-    val innerShape = RoundedCornerShape(cornerRadius - borderWidth)
+    val borderWidth  = 1.dp
+    val outerShape   = RoundedCornerShape(cornerRadius)
+    val innerShape   = RoundedCornerShape(cornerRadius - borderWidth)
 
     val rawAccentColor by viewModel.accentColor.collectAsState()
     val resolvedAccentColor = remember(rawAccentColor) {
@@ -56,17 +56,24 @@ fun MicaTile(
     }
 
     val notificationCounts by viewModel.notificationCounts.collectAsState()
-    // TileType.MEDIA : la "notification" est le lecteur système, pas une vraie notif.
-    // On masque le badge pour éviter le "1" permanent et trompeur.
-    val badgeCount = remember(config.packageName, config.type, notificationCounts) {
-        if (config.type == TileType.MEDIA) 0
+
+    // ── FIX : on observe showBadges depuis le SettingsViewModel ──────────────
+    // transparencyEnabled est déjà dans AppViewModel, showBadges est dans
+    // SettingsViewModel — on le lit depuis AppViewModel.settingsManager via
+    // un StateFlow dédié (voir note ci-dessous).
+    val showBadges by viewModel.showBadges.collectAsState(initial = true)
+
+    // Calcul du badge : 0 si MEDIA (lecteur système = pas une vraie notif)
+    // ou si showBadges est désactivé dans les settings.
+    val badgeCount = remember(config.packageName, config.type, notificationCounts, showBadges) {
+        if (!showBadges || config.type == TileType.MEDIA) 0
         else notificationCounts[config.packageName] ?: 0
     }
 
     val pressOverlayAlpha by animateFloatAsState(
-        targetValue = if (isPressed) 0.15f else 0f,
-        animationSpec = tween(durationMillis = 75),
-        label = "tile_overlay_alpha"
+        targetValue    = if (isPressed) 0.15f else 0f,
+        animationSpec  = tween(durationMillis = 75),
+        label          = "tile_overlay_alpha"
     )
 
     val contentColor = if (isDark) Color.White else Color(0xFF1A1A1A)
@@ -78,7 +85,6 @@ fun MicaTile(
         else                             -> Color(0xFFF3F3F3)
     }
 
-    // Bordure neutre — dégradé blanc/transparent sans teinte wallpaper
     val borderBrush = Brush.verticalGradient(
         colors = listOf(
             Color.White.copy(alpha = if (isDark) 0.18f else 0.70f),
@@ -95,16 +101,16 @@ fun MicaTile(
 
     Box(modifier = modifier.graphicsLayer { clip = false }) {
 
-        // Tile — zIndex 0
+        // ── Tile surface ──────────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(0f)
                 .fluentMicaComplex(
                     micaParams = mica,
-                    enabled = isTransparencyEnabled,
-                    elevation = 0.dp,
-                    shape = outerShape
+                    enabled    = isTransparencyEnabled,
+                    elevation  = 0.dp,
+                    shape      = outerShape
                 )
                 .then(
                     if (isTransparencyEnabled) Modifier.border(borderWidth, borderBrush, outerShape)
@@ -122,28 +128,27 @@ fun MicaTile(
                 TileContentDispatcher(
                     config = config,
                     contentColor = contentColor,
-                    accentColor = resolvedAccentColor
+                    accentColor = resolvedAccentColor,
+                    micaParams = mica, // <-- AJOUTÉ
+                    isTransparencyEnabled = isTransparencyEnabled // <-- AJOUTÉ
                 )
             }
         }
 
-        // Badge — zIndex 1, toujours devant
-        // Disparaît immédiatement au début du drag (fadeOut 80ms)
-        // Réapparaît avec un délai de 200ms après le relâché pour laisser
-        // la grille finir son animation de replacement avant que le badge pop
+        // ── Badge de notification ─────────────────────────────────────────────
         if (badgeCount > 0) {
             AnimatedVisibility(
-                visible = !isPressed,
-                enter = fadeIn(animationSpec = tween(durationMillis = 150, delayMillis = 200)),
-                exit  = fadeOut(animationSpec = tween(durationMillis = 80)),
+                visible  = !isPressed,
+                enter    = fadeIn(animationSpec  = tween(durationMillis = 150, delayMillis = 200)),
+                exit     = fadeOut(animationSpec = tween(durationMillis = 80)),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(x = 8.dp, y = (-8).dp)
                     .zIndex(1f)
             ) {
                 FluentBadge(
-                    count = badgeCount,
-                    badgeColor = resolvedAccentColor,
+                    count       = badgeCount,
+                    badgeColor  = resolvedAccentColor,
                     strokeColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFAFAFA)
                 )
             }

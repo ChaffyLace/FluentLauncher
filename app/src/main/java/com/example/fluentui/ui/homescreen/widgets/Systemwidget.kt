@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.fluentui.R
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.ui.theme.FluentFontFamily
@@ -60,6 +62,9 @@ private const val TAG = "SystemWidget"
 // DATA MODELS
 // ============================================================================
 
+/**
+ * Represents the current snapshot of hardware toggles.
+ */
 private data class SystemState(
     val wifiEnabled:  Boolean = false,
     val wifiSsid:     String  = "",
@@ -69,6 +74,9 @@ private data class SystemState(
     val torchEnabled: Boolean = false
 )
 
+/**
+ * UI definition for a specific system action button.
+ */
 private data class ToggleAction(
     val activeIcon:   ImageVector,
     val inactiveIcon: ImageVector,
@@ -80,7 +88,7 @@ private data class ToggleAction(
 )
 
 // ============================================================================
-// WIDGET PRINCIPAL
+// MAIN WIDGET
 // ============================================================================
 
 @Composable
@@ -93,6 +101,7 @@ fun SystemWidget(
     val context = LocalContext.current
     var state   by remember { mutableStateOf(readSystemState(context, false)) }
 
+    // Register system listeners for real-time updates
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -107,6 +116,7 @@ fun SystemWidget(
         }
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
 
+        // Torch state requires a specific CameraManager callback
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val torchCb = object : CameraManager.TorchCallback() {
             override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
@@ -121,15 +131,16 @@ fun SystemWidget(
         }
     }
 
+    // Prepare action list with internationalized strings
     val actions = listOf(
         ToggleAction(
             activeIcon   = FluentIcons.Filled.WiFi1,
             inactiveIcon = FluentIcons.Regular.WiFiOff,
-            label        = "Wi-Fi",
+            label        = stringResource(R.string.sys_wifi),
             sublabel     = when {
                 state.wifiEnabled && state.wifiSsid.isNotBlank() -> state.wifiSsid
-                state.wifiEnabled -> "Connecté"
-                else -> "Désactivé"
+                state.wifiEnabled -> stringResource(R.string.sys_state_connected)
+                else -> stringResource(R.string.sys_state_off)
             },
             isActive    = state.wifiEnabled,
             activeColor = accentColor,
@@ -138,11 +149,11 @@ fun SystemWidget(
         ToggleAction(
             activeIcon   = FluentIcons.Filled.Bluetooth,
             inactiveIcon = FluentIcons.Regular.BluetoothDisabled,
-            label        = "Bluetooth",
+            label        = stringResource(R.string.sys_bluetooth),
             sublabel     = when {
                 state.btEnabled && state.btDeviceName.isNotBlank() -> state.btDeviceName
-                state.btEnabled -> "Activé"
-                else -> "Désactivé"
+                state.btEnabled -> stringResource(R.string.sys_state_on)
+                else -> stringResource(R.string.sys_state_off)
             },
             isActive    = state.btEnabled,
             activeColor = accentColor,
@@ -151,19 +162,19 @@ fun SystemWidget(
         ToggleAction(
             activeIcon   = FluentIcons.Filled.Airplane,
             inactiveIcon = FluentIcons.Regular.Airplane,
-            label        = "Mode Avion",
-            sublabel     = if (state.airplaneMode) "Activé" else "Désactivé",
+            label        = stringResource(R.string.sys_airplane_mode),
+            sublabel     = if (state.airplaneMode) stringResource(R.string.sys_state_on) else stringResource(R.string.sys_state_off),
             isActive     = state.airplaneMode,
-            activeColor  = Color(0xFFFF8C00),
+            activeColor  = Color(0xFFFF8C00), // Windows Orange
             onClick      = { toggleAirplaneMode(context) }
         ),
         ToggleAction(
             activeIcon   = FluentIcons.Filled.Flashlight,
             inactiveIcon = FluentIcons.Regular.FlashlightOff,
-            label        = "Torche",
-            sublabel     = if (state.torchEnabled) "Allumée" else "Éteinte",
+            label        = stringResource(R.string.sys_torch),
+            sublabel     = if (state.torchEnabled) stringResource(R.string.sys_torch_on) else stringResource(R.string.sys_torch_off),
             isActive     = state.torchEnabled,
-            activeColor  = Color(0xFFD13438),
+            activeColor  = Color(0xFFD13438), // Red
             onClick      = { toggleTorch(context, state.torchEnabled) }
         )
     )
@@ -174,15 +185,13 @@ fun SystemWidget(
     ) {
         when (config.size) {
             TileSize.TINY -> TinyLayout(state, accentColor)
-            TileSize.SMALL  -> ActionGrid(actions, columns = 2, contentColor = contentColor, size = TileSize.SMALL)
-            TileSize.MEDIUM -> ActionGrid(actions, columns = 2, contentColor = contentColor, size = TileSize.MEDIUM)
-            TileSize.LARGE  -> ActionGrid(actions, columns = 2, contentColor = contentColor, size = TileSize.LARGE)
+            else -> ActionGrid(actions, columns = 2, contentColor = contentColor, size = config.size)
         }
     }
 }
 
 // ============================================================================
-// TINY
+// TINY LAYOUT
 // ============================================================================
 
 @Composable
@@ -193,7 +202,7 @@ private fun TinyLayout(state: SystemState, accentColor: Color) {
 }
 
 // ============================================================================
-// GRILLE UNIFORME — une seule source de vérité pour toutes les tailles
+// ACTION GRID — Unified source for SMALL, MEDIUM, LARGE
 // ============================================================================
 
 @Composable
@@ -203,7 +212,7 @@ private fun ActionGrid(
     contentColor: Color,
     size:         TileSize
 ) {
-    // Dimensions adaptées par taille — valeurs mesurées pour que ça respire bien
+    // Proportional dimensions for a polished look in each tile size
     val iconBoxSize: Dp
     val iconSize:    Dp
     val iconRadius:  Dp
@@ -261,7 +270,7 @@ private fun ActionGrid(
 }
 
 // ============================================================================
-// TUILE TOGGLE
+// TOGGLE TILE
 // ============================================================================
 
 @Composable
@@ -309,100 +318,57 @@ private fun ToggleTile(
             }
             .padding(horizontal = 10.dp, vertical = 10.dp)
     ) {
-        if (isLarge) {
-            // LARGE — icône centrée en haut, textes en bas à gauche
-            Column(
-                modifier            = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween
+        Column(
+            modifier            = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.Start
+        ) {
+            Box(
+                modifier         = Modifier
+                    .size(iconBoxSize)
+                    .clip(RoundedCornerShape(iconRadius))
+                    .background(iconBgColor),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier         = Modifier
-                        .size(iconBoxSize)
-                        .clip(RoundedCornerShape(iconRadius))
-                        .background(iconBgColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        currentIcon, null,
-                        Modifier.size(iconSize).scale(iconScale),
-                        tint = iconTint
-                    )
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text       = action.label,
-                        fontFamily = FluentFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize   = labelSp,
-                        color      = Color.White,
-                        maxLines   = 1,
-                        overflow   = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text       = action.sublabel,
-                        fontFamily = FluentFontFamily,
-                        fontWeight = FontWeight.Normal,
-                        fontSize   = sublabelSp,
-                        color      = Color.White.copy(0.55f),
-                        maxLines   = 1,
-                        overflow   = TextOverflow.Ellipsis
-                    )
-                }
+                Icon(
+                    currentIcon, null,
+                    Modifier.size(iconSize).scale(iconScale),
+                    tint = iconTint
+                )
             }
-        } else {
-            // SMALL / MEDIUM — icône en haut à gauche, textes en bas
-            Column(
-                modifier            = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween,
-                horizontalAlignment = Alignment.Start
-            ) {
-                Box(
-                    modifier         = Modifier
-                        .size(iconBoxSize)
-                        .clip(RoundedCornerShape(iconRadius))
-                        .background(iconBgColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        currentIcon, null,
-                        Modifier.size(iconSize).scale(iconScale),
-                        tint = iconTint
-                    )
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(
-                        text       = action.label,
-                        fontFamily = FluentFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize   = labelSp,
-                        color      = Color.White,
-                        maxLines   = 1,
-                        overflow   = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text       = action.sublabel,
-                        fontFamily = FluentFontFamily,
-                        fontWeight = FontWeight.Normal,
-                        fontSize   = sublabelSp,
-                        color      = Color.White.copy(0.55f),
-                        maxLines   = 1,
-                        overflow   = TextOverflow.Ellipsis
-                    )
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(if (isLarge) 2.dp else 1.dp)) {
+                Text(
+                    text       = action.label,
+                    fontFamily = FluentFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize   = labelSp,
+                    color      = Color.White,
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis
+                )
+                Text(
+                    text       = action.sublabel,
+                    fontFamily = FluentFontFamily,
+                    fontWeight = FontWeight.Normal,
+                    fontSize   = sublabelSp,
+                    color      = Color.White.copy(0.55f),
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis
+                )
             }
         }
     }
 }
 
 // ============================================================================
-// TOGGLES
+// SYSTEM COMMANDS (Hardware Toggle Logic)
 // ============================================================================
 
 private fun toggleTorch(context: Context, currentlyEnabled: Boolean) {
     runCatching {
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         cm.setTorchMode(cm.cameraIdList.firstOrNull() ?: return, !currentlyEnabled)
-    }.onFailure { Log.e(TAG, "toggleTorch", it) }
+    }.onFailure { Log.e(TAG, "toggleTorch error", it) }
 }
 
 private fun toggleAirplaneMode(context: Context) {
@@ -455,7 +421,7 @@ private fun toggleBluetooth(context: Context, currentlyEnabled: Boolean) {
 }
 
 // ============================================================================
-// STATE READER
+// SYSTEM STATE READER
 // ============================================================================
 
 @Suppress("DEPRECATION")
@@ -473,6 +439,10 @@ private fun readWifiSsid(context: Context, wifiMgr: WifiManager): String {
     }.getOrDefault("")
 }
 
+/**
+ * Reads all hardware states. Wrapped in runCatching to prevent crashes
+ * due to evolving Android security policies.
+ */
 private fun readSystemState(context: Context, currentTorchState: Boolean): SystemState {
     return runCatching {
         val wifiMgr     = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -483,9 +453,10 @@ private fun readSystemState(context: Context, currentTorchState: Boolean): Syste
         val hasBtPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
             context.checkSelfPermission("android.permission.BLUETOOTH_CONNECT") == PackageManager.PERMISSION_GRANTED
         else true
-        val btEnabled = hasBtPerm && try { btMgr.adapter?.isEnabled == true } catch (e: SecurityException) { false }
+
+        val btEnabled = hasBtPerm && try { btMgr.adapter?.isEnabled == true } catch (e: Exception) { false }
         val btDevice  = if (btEnabled && hasBtPerm) {
-            try { btMgr.adapter?.bondedDevices?.firstOrNull()?.name.orEmpty() } catch (e: SecurityException) { "" }
+            try { btMgr.adapter?.bondedDevices?.firstOrNull()?.name.orEmpty() } catch (e: Exception) { "" }
         } else ""
 
         val airplaneMode = Settings.Global.getInt(
@@ -494,7 +465,7 @@ private fun readSystemState(context: Context, currentTorchState: Boolean): Syste
 
         SystemState(wifiEnabled, wifiSsid, btEnabled, btDevice, airplaneMode, currentTorchState)
     }.getOrElse {
-        Log.e(TAG, "Error reading system state", it)
+        Log.e(TAG, "Hardware state polling failure", it)
         SystemState(torchEnabled = currentTorchState)
     }
 }

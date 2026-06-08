@@ -1,3 +1,9 @@
+/**
+ * @file FluentSearchPill.kt
+ * @description Windows 11 style search bar with Mica effects and
+ * localized strings for production readiness.
+ */
+
 package com.example.fluentui.ui.search
 
 import androidx.compose.animation.*
@@ -9,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,10 +28,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.stringResource // Import indispensable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.fluentui.R // Assure-toi d'importer ton package R
 import com.example.fluentui.wallpaper.MicaState
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.color.SearchSparkle
@@ -41,8 +50,9 @@ fun FluentSearchPill(
     isDark: Boolean,
     isTransparencyEnabled: Boolean = true
 ) {
-    val micaParams by MicaState.micaParams   // ← était Wallpaperrepository.micaParams
+    val micaParams by MicaState.micaParams
 
+    // UI Colors & Brushes
     val baseMicaColor = if (isDark) Color(0xFF202020) else Color(0xFFFAFAFA)
     val micaAlpha = if (isTransparencyEnabled) 0.85f else 1f
 
@@ -58,13 +68,15 @@ fun FluentSearchPill(
     val contentColor = if (isDark) Color.White.copy(0.90f) else Color.Black.copy(0.80f)
     val borderColor  = if (isDark) Color.White.copy(0.10f) else Color.Black.copy(0.06f)
 
+    // Animation States
     val isFocused = remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (isFocused.value) 1.02f else 1f,
-        label = "scale"
+        label = "pill_scale"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "Shimmer")
+    // Shimmer effect on text
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
     val shimmerTranslate by if (isTransparencyEnabled) {
         infiniteTransition.animateFloat(
             initialValue = 0f,
@@ -73,7 +85,7 @@ fun FluentSearchPill(
                 animation = tween(2500, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
-            label = "ShimmerTranslate"
+            label = "shimmer_pos"
         )
     } else {
         remember { mutableStateOf(0f) }
@@ -89,74 +101,51 @@ fun FluentSearchPill(
         end = Offset(shimmerTranslate + 200f, 200f)
     )
 
-    val windowsShape = CircleShape
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
             .scale(scale)
-            .shadow(
-                elevation = 4.dp,
-                shape = windowsShape,
-                spotColor = if (isDark) Color.Black else Color.Black.copy(0.15f)
-            )
-            .clip(windowsShape)
-            .border(1.dp, borderColor, windowsShape)
+            .shadow(4.dp, CircleShape)
+            .clip(CircleShape)
+            .border(1.dp, borderColor, CircleShape)
     ) {
-        // LAYER 1 : Base Mica
+        // Mica background & Noise
         Box(Modifier.fillMaxSize().background(micaBrush))
-
-        // LAYER 2 : Grain (Noise)
-        val noiseBrush = micaParams?.noiseBrush
-        val noiseAlpha = micaParams?.noiseAlpha ?: 0.05f
-        if (isTransparencyEnabled && noiseBrush != null) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = noiseAlpha }
-                    .background(noiseBrush)
-            )
+        micaParams?.noiseBrush?.let { safeNoiseBrush ->
+            if (isTransparencyEnabled) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = micaParams?.noiseAlpha ?: 0.05f }
+                        .background(safeNoiseBrush)
+                )
+            }
         }
-
-        // LAYER 3 : Contenu
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AnimatedContent(
-                targetState = isFocused.value || searchQuery.isNotEmpty(),
-                label = "Icon"
-            ) { active ->
-                if (active) {
-                    Icon(
-                        imageVector = FluentIcons.Color.SearchSparkle,
-                        contentDescription = null,
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(24.dp)
-                    )
-                } else {
-                    Icon(
-                        imageVector = FluentIcons.Filled.Search,
-                        contentDescription = null,
-                        tint = contentColor.copy(0.7f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+            // Icon switching logic
+            AnimatedContent(targetState = isFocused.value || searchQuery.isNotEmpty()) { active ->
+                Icon(
+                    imageVector = if (active) FluentIcons.Color.SearchSparkle else FluentIcons.Filled.Search,
+                    contentDescription = null,
+                    tint = if (active) Color.Unspecified else contentColor.copy(0.7f),
+                    modifier = Modifier.size(24.dp)
+                )
             }
 
             Spacer(modifier = Modifier.width(16.dp))
 
             Box(modifier = Modifier.weight(1f)) {
                 if (searchQuery.isEmpty()) {
-                    androidx.compose.material3.Text(
-                        text = "Rechercher",
+                    Text(
+                        // TRADUCTION ICI
+                        text = stringResource(id = R.string.search_placeholder),
                         style = TextStyle(
                             fontWeight = FontWeight.Medium,
                             fontSize = 16.sp,
-                            letterSpacing = 0.2.sp,
                             brush = if (isFocused.value && isTransparencyEnabled) textShimmerBrush
                             else SolidColor(contentColor.copy(0.6f))
                         )
@@ -166,32 +155,23 @@ fun FluentSearchPill(
                 BasicTextField(
                     value = searchQuery,
                     onValueChange = onQueryChange,
-                    textStyle = TextStyle(
-                        color = contentColor,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 0.2.sp
-                    ),
+                    textStyle = TextStyle(color = contentColor, fontSize = 16.sp, fontWeight = FontWeight.Medium),
                     singleLine = true,
                     cursorBrush = SolidColor(contentColor),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onFocusChanged { focusState ->
-                            isFocused.value = focusState.isFocused
-                            onFocusChange(focusState.isFocused)
+                        .onFocusChanged {
+                            isFocused.value = it.isFocused
+                            onFocusChange(it.isFocused)
                         }
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier.size(40.dp)
-            ) {
+            // Settings Button with localized content description for accessibility
+            IconButton(onClick = onSettingsClick) {
                 Icon(
                     imageVector = FluentIcons.Regular.MoreVertical,
-                    contentDescription = "Settings",
+                    contentDescription = stringResource(id = R.string.search_settings_description),
                     tint = contentColor.copy(0.7f),
                     modifier = Modifier.size(24.dp)
                 )

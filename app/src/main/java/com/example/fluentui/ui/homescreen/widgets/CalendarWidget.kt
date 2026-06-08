@@ -16,11 +16,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.fluentui.R
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import com.example.fluentui.ui.motion.FluentLiveTile
@@ -85,6 +87,10 @@ object CalendarDataProvider {
             val events = mutableListOf<CalendarEvent>()
             val today  = LocalDate.now()
 
+            // Textes externalisés
+            val untitledEventStr = context.getString(R.string.cal_untitled_event)
+            val tomorrowStr = context.getString(R.string.cal_tomorrow)
+
             try {
                 context.contentResolver.query(
                     uri, PROJECTION, null, null,
@@ -106,8 +112,8 @@ object CalendarDataProvider {
                         if (startMillis == 0L) continue   // ligne corrompue
 
                         val title = if (titleIdx != -1)
-                            c.getString(titleIdx).orEmpty().ifBlank { "Sans titre" }
-                        else "Sans titre"
+                            c.getString(titleIdx).orEmpty().ifBlank { untitledEventStr }
+                        else untitledEventStr
 
                         // Priorité DISPLAY_COLOR → EVENT_COLOR → accent système
                         var colorInt = if (displayColorIdx != -1) c.getInt(displayColorIdx) else 0
@@ -122,9 +128,9 @@ object CalendarDataProvider {
                         val endTimeStr    = Instant.ofEpochMilli(endMillis).atZone(zone).format(TIME_FORMATTER)
 
                         val displayTime = when (eventDate) {
-                            today            -> "$startTimeStr - $endTimeStr"
-                            today.plusDays(1) -> "Demain · $startTimeStr"
-                            else             -> {
+                            today             -> "$startTimeStr - $endTimeStr"
+                            today.plusDays(1) -> "$tomorrowStr · $startTimeStr"
+                            else              -> {
                                 val shortDay = eventDate.dayOfWeek
                                     .getDisplayName(JavaTextStyle.SHORT, Locale.getDefault())
                                     .replaceFirstChar { it.uppercase() }
@@ -321,7 +327,7 @@ private fun EventsView2x2(event: CalendarEvent, contentColor: Color) {
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text       = "À venir",
+            text       = stringResource(R.string.cal_upcoming),
             color      = contentColor.copy(alpha = 0.6f),
             fontSize   = 12.sp,
             fontWeight = FontWeight.Medium,

@@ -20,11 +20,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.fluentui.R
 import com.example.fluentui.ui.system.TileConfig
 import com.example.fluentui.ui.system.TileSize
 import fluent.ui.system.icons.FluentIcons
@@ -33,13 +35,16 @@ import fluent.ui.system.icons.regular.Add
 import kotlinx.coroutines.delay
 
 // ============================================================================
-// PERSISTANCE
+// PERSISTENCE
 // ============================================================================
 
 private const val PREFS_NAME   = "photo_widget_prefs"
 private const val MAX_PHOTOS   = 10
 private const val SLIDESHOW_MS = 5_000L
 
+/**
+ * Persists the list of selected URIs for a specific tile.
+ */
 private fun saveUris(context: Context, tileId: String, uris: List<Uri>) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .edit()
@@ -47,6 +52,9 @@ private fun saveUris(context: Context, tileId: String, uris: List<Uri>) {
         .apply()
 }
 
+/**
+ * Loads persisted URIs. Returns an empty list if none are found.
+ */
 private fun loadUris(context: Context, tileId: String): List<Uri> {
     val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getString("photos_$tileId", null) ?: return emptyList()
@@ -68,10 +76,10 @@ fun PhotoWidget(
     var photos       by remember(tileId) { mutableStateOf(loadUris(context, tileId)) }
     var currentIndex by remember { mutableIntStateOf(0) }
 
-    // ── ACTION_OPEN_DOCUMENT avec EXTRA_ALLOW_MULTIPLE ────────────────────────
-    // Plus fiable que PickMultipleVisualMedia qui tombe en fallback galerie sur
-    // certains OEM. ACTION_OPEN_DOCUMENT retourne des URIs persistants que
-    // takePersistableUriPermission peut toujours accepter.
+    // ── ACTION_OPEN_DOCUMENT with EXTRA_ALLOW_MULTIPLE ────────────────────────
+    // More reliable than PickMultipleVisualMedia as it avoids gallery fallbacks
+    // on certain OEMs. ACTION_OPEN_DOCUMENT returns persistent URIs that
+    // takePersistableUriPermission can handle for long-term access.
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -96,13 +104,14 @@ fun PhotoWidget(
         }
     }
 
+    /**
+     * Launches the system document picker for images.
+     */
     fun openPicker() {
-        // "image/*" — toutes les images, le sélecteur système s'ouvre
-        // avec multi-sélection activée via OpenMultipleDocuments
         picker.launch(arrayOf("image/*"))
     }
 
-    // ── Slideshow ─────────────────────────────────────────────────────────────
+    // ── Slideshow Logic ───────────────────────────────────────────────────────
     LaunchedEffect(photos.size) {
         if (photos.size > 1) {
             while (true) {
@@ -127,7 +136,7 @@ fun PhotoWidget(
         if (photos.isEmpty()) {
             EmptyState(size = config.size, onPickPhotos = ::openPicker)
         } else {
-            // ── Photos ────────────────────────────────────────────────────────
+            // ── Photo Display (Crossfade) ────────────────────────────────────
             AnimatedContent(
                 targetState  = currentIndex,
                 transitionSpec = { fadeIn(tween(800)) togetherWith fadeOut(tween(800)) },
@@ -149,7 +158,7 @@ fun PhotoWidget(
                 )
             }
 
-            // ── Indicateurs ───────────────────────────────────────────────────
+            // ── Pagination Indicators ────────────────────────────────────────
             if (config.size != TileSize.TINY && photos.size > 1) {
                 Row(
                     modifier              = Modifier
@@ -171,7 +180,7 @@ fun PhotoWidget(
                 }
             }
 
-            // ── Bouton + ──────────────────────────────────────────────────────
+            // ── Add Button (+) ────────────────────────────────────────────────
             if (config.size != TileSize.TINY) {
                 Box(
                     modifier = Modifier
@@ -191,9 +200,12 @@ fun PhotoWidget(
 }
 
 // ============================================================================
-// ÉTAT VIDE
+// EMPTY STATE
 // ============================================================================
 
+/**
+ * UI displayed when no photos have been selected.
+ */
 @Composable
 private fun EmptyState(size: TileSize, onPickPhotos: () -> Unit) {
     Box(
@@ -215,7 +227,7 @@ private fun EmptyState(size: TileSize, onPickPhotos: () -> Unit) {
             )
             if (size != TileSize.TINY) {
                 Text(
-                    text       = "Appuyer pour choisir",
+                    text       = stringResource(R.string.photo_widget_empty),
                     color      = Color.White.copy(alpha = 0.6f),
                     fontSize   = if (size == TileSize.SMALL) 11.sp else 13.sp,
                     fontWeight = FontWeight.Medium

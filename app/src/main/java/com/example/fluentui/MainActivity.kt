@@ -1,117 +1,138 @@
+/*
+ * ════════════════════════════════════════════════════════════════════════════════
+ *  FluentUI Launcher — Main Activity
+ * ════════════════════════════════════════════════════════════════════════════════
+ */
+
 package com.example.fluentui
 
-import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
+import com.example.fluentui.data.SettingsManager
 import com.example.fluentui.ui.components.AppScreen
 import com.example.fluentui.ui.components.AppViewModel
 import com.example.fluentui.ui.components.SetupWizardScreen
 import com.example.fluentui.ui.theme.FluentUITheme
 import com.example.fluentui.ui.utils.IconCache
 
-/**
- * =================================================================================
- * CORE LAUNCHER ENTRY POINT
- * =================================================================================
- * Engineering Note: Manages system-level intents, memory trimming, window configuration,
- * and top-level navigation routing (OOBE vs Main Dashboard).
- * Configured strictly for an Edge-to-Edge experience with manual IME (keyboard) handling.
- */
 class MainActivity : ComponentActivity() {
 
-    // Global ViewModel scoped to the lifecycle of the entire Launcher Activity
+    private companion object {
+        const val PREFS_NAME = "fluent_prefs"
+        const val KEY_SETUP_COMPLETE = "setup_complete"
+        const val KEY_LAUNCHER_LAYOUT = "launcher_layout"
+        const val EXTRA_OPEN_ACTION_CENTER = "OPEN_ACTION_CENTER"
+    }
+
     private val viewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        configureEdgeToEdge()
         super.onCreate(savedInstanceState)
-
-        // 1. Enforce Edge-to-Edge display (Draw behind system bars)
-        setupSystemBars()
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // 2. THE ULTIMATE IME FIX
-        // Forces Android's WindowManager to resize the app window when the keyboard opens,
-        // rather than pushing the entire UI off-screen (adjustPan).
-        // This makes the Compose `.imePadding()` modifier actually work.
-        @Suppress("DEPRECATION")
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        configureWindowInsets()
+        configureSoftInputMode()
+        routeIncomingIntent(intent)
 
         setContent {
             FluentUITheme {
-                // Initialize SharedPreferences to track the Out-Of-Box Experience (OOBE) state
-                val prefs = getSharedPreferences("fluent_prefs", Context.MODE_PRIVATE)
-                var isSetupComplete by remember {
-                    mutableStateOf(prefs.getBoolean("setup_complete", false))
-                }
-
-                // Top-Level Router Strategy
-                if (!isSetupComplete) {
-                    SetupWizardScreen(
-                        viewModel = viewModel,
-                        onSetupComplete = {
-                            // Persist the completion state so the wizard never shows again
-                            prefs.edit().putBoolean("setup_complete", true).apply()
-                            isSetupComplete = true
-                        }
-                    )
-                } else {
-                    // Launch the actual Home Screen / App Drawer
-                    AppScreen(
-                        viewModel = viewModel
-                    )
-                }
+                LauncherRoot(viewModel)
             }
-        }
-    }
-
-    // =================================================================================
-    // SYSTEM LIFECYCLE & PERFORMANCE MANAGEMENT
-    // =================================================================================
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        // Aggressively release heavy bitmap resources when the Android OS is under memory pressure.
-        // Critical for a Launcher to maintain high performance and avoid OOM (Out Of Memory) kills.
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
-            IconCache.clear()
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Intercept physical or nav-bar home button presses to reset the launcher state
-        // (e.g., closing the app drawer or search overlay).
-        if (intent.hasCategory(Intent.CATEGORY_HOME) || intent.action == Intent.ACTION_MAIN) {
-            viewModel.onHomePressed()
-        }
-        cancelTransition()
+        handleHomeIntent(intent)
+        routeIncomingIntent(intent)
+        suppressActivityTransition()
     }
 
     override fun onResume() {
         super.onResume()
-        // Ensure no default Android activity transition animations play when returning to home.
-        // A launcher must appear instantly.
-        cancelTransition()
+        suppressActivityTransition()
     }
 
-    /**
-     * Disables the default Android transition animations.
-     * This is mandatory for a custom Launcher to ensure it mimics native OS behavior.
-     */
-    private fun cancelTransition() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // API 34+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= 80) IconCache.clear()
+    }
+
+    @Composable
+    private fun LauncherRoot(viewModel: AppViewModel) {
+        val prefs = remember { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+        val context = LocalContext.current
+        val settingsManager = remember { SettingsManager(context) }
+
+        var isSetupComplete by remember {
+            mutableStateOf(prefs.getBoolean(KEY_SETUP_COMPLETE, false))
+        }
+
+        when {
+            !isSetupComplete -> SetupWizardScreen(
+                viewModel = viewModel,
+                onSetupComplete = {
+                    prefs.edit().putBoolean(KEY_SETUP_COMPLETE, true).apply()
+                    isSetupComplete = true
+                }
+            )
+            else -> {
+                AppScreen(viewModel = viewModel)
+            }
+        }
+    }
+
+    private fun configureEdgeToEdge() {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
+        )
+    }
+
+    private fun configureWindowInsets() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        val useLightIcons = !resources.configuration.isNightMode()
+        controller?.isAppearanceLightStatusBars = useLightIcons
+        controller?.isAppearanceLightNavigationBars = useLightIcons
+    }
+
+    private fun configureSoftInputMode() {
+        @Suppress("DEPRECATION")
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+    }
+
+    private fun routeIncomingIntent(intent: Intent?) {
+        intent ?: return
+        if (intent.getBooleanExtra(EXTRA_OPEN_ACTION_CENTER, false)) {
+            viewModel.toggleActionCenter(true)
+        }
+    }
+
+    private fun handleHomeIntent(intent: Intent) {
+        if (intent.hasCategory(Intent.CATEGORY_HOME) || intent.action == Intent.ACTION_MAIN) {
+            viewModel.onHomePressed()
+        }
+    }
+
+    private fun suppressActivityTransition() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
             overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
         } else {
@@ -119,20 +140,7 @@ class MainActivity : ComponentActivity() {
             overridePendingTransition(0, 0)
         }
     }
-
-    /**
-     * Makes the activity layout full-screen (behind status and navigation bars)
-     * and sets the system bar backgrounds to transparent for the Mica effect.
-     */
-    private fun setupSystemBars() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
-
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        // This ensures icons (clock, battery) remain visible against the wallpaper.
-        // In a fully dynamic setup, these should react to the wallpaper's luminance.
-        controller.isAppearanceLightStatusBars = false
-        controller.isAppearanceLightNavigationBars = false
-    }
 }
+
+private fun Configuration.isNightMode(): Boolean =
+    (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES

@@ -1,6 +1,12 @@
+/**
+ * @file AppGrid.kt
+ * @description Core UI component for displaying and managing applications in a grid layout.
+ * Features production-grade drag-and-drop physics, strict collision detection for folder creation,
+ * and high-fidelity Mica material rendering.
+ */
+
 package com.example.fluentui.ui.components
 
-import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import androidx.compose.animation.*
@@ -23,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -35,6 +43,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,24 +53,50 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.fluentui.R
 import com.example.fluentui.ui.utils.IconCache
 import com.example.fluentui.wallpaper.MicaParams
+import com.example.fluentui.wallpaper.fluentMicaComplex
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.regular.Delete
+import fluent.ui.system.icons.regular.Folder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.Collator
+import java.util.UUID
 import kotlin.math.roundToInt
+
+
+// =============================================================================
+// UTILS
+// =============================================================================
 
 private val AppIconShape = RoundedCornerShape(12.dp)
 
+/**
+ * Calcule une zone de collision optimisée.
+ * Un ratio de 0.05f garde la fluidité tout en évitant les fusions accidentelles
+ * quand on frôle à peine l'icône voisine.
+ */
+private fun shrinkRect(rect: Rect, ratio: Float = 0.05f): Rect {
+    val widthShrink = rect.width * ratio
+    val heightShrink = rect.height * ratio
+    return Rect(
+        left = rect.left + widthShrink,
+        top = rect.top + heightShrink,
+        right = rect.right - widthShrink,
+        bottom = rect.bottom - heightShrink
+    )
+}
 // =============================================================================
 // INTERNAL APP ICON
 // =============================================================================
 
 @Composable
 fun InternalAppIcon(packageName: String, modifier: Modifier = Modifier) {
-    val bitmap = remember(packageName) { IconCache.get(packageName) }
+    val bitmap = remember(packageName) {
+        try { IconCache.get(packageName) } catch (e: SecurityException) { null }
+    }
     if (bitmap != null) {
         Image(
             bitmap = bitmap.asImageBitmap(),
@@ -102,13 +138,21 @@ fun AppGrid(
 
     val notifCounts by viewModel.notificationCounts.collectAsState()
 
+    var folders by remember { mutableStateOf<List<AppFolder>>(emptyList()) }
+    var openFolderId by remember { mutableStateOf<String?>(null) }
+
+    // Physics & Drag State
     var draggingPackage      by remember { mutableStateOf<String?>(null) }
     var ghostInitialPosition by remember { mutableStateOf(Offset.Zero) }
     var draggingOffset       by remember { mutableStateOf(Offset.Zero) }
-    val itemBounds = remember { mutableMapOf<String, Rect>() }
+    val itemBounds           = remember { mutableMapOf<String, Rect>() }
     var isHoveringDelete     by remember { mutableStateOf(false) }
-    var lastSwapTime         by remember { mutableStateOf(0L) }
-    val isGridInDragMode      = draggingPackage != null
+
+    // Hover targeting states (Visual cues before commit)
+    var hoveringFolderId     by remember { mutableStateOf<String?>(null) }
+    var hoveringAppId        by remember { mutableStateOf<String?>(null) }
+
+    val isGridInDragMode     = draggingPackage != null
 
     val allApps by remember(viewModel.otherApps.value, searchQuery, hiddenApps) {
         derivedStateOf {
@@ -119,7 +163,19 @@ fun AppGrid(
         }
     }
 
+    val folderAppPackages = remember(folders) {
+        folders.flatMap { it.apps.map { a -> a.packageName } }.toSet()
+    }
+    val freeApps by remember(allApps, folderAppPackages) {
+        derivedStateOf { allApps.filter { it.packageName !in folderAppPackages } }
+    }
+
+    val openFolder = remember(openFolderId, folders) {
+        folders.find { it.id == openFolderId }
+    }
+
     if (isVertical) {
+        // Vertical List Mode
         val appsByLetter by remember(allApps) {
             derivedStateOf { AppGrouper.groupByAlphabet(allApps) }
         }
@@ -140,6 +196,7 @@ fun AppGrid(
                             app = app, iconSize = iconSize, fontSize = fontSize,
                             showLabel = showLabels, accentColor = accentColor,
                             isDragging = false, isGridInDragMode = false,
+                            isHoveredForFolder = false,
                             micaParams = micaParams, onPinRequest = onPinRequest,
                             onClose = onClose ?: {}, onDragStart = {},
                             badgeCount = notifCounts[app.packageName] ?: 0,
@@ -158,11 +215,15 @@ fun AppGrid(
             )
         }
     } else {
+        // Horizontal Grid Mode (with Folders)
+        val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
         val itemsPerPage = columnCount * rowCount
-        val pageCount    = (allApps.size + itemsPerPage - 1) / itemsPerPage.coerceAtLeast(1)
+        val pageCount    = ((freeApps.size + folders.size) + itemsPerPage - 1) / itemsPerPage.coerceAtLeast(1)
         val pagerState   = rememberPagerState(pageCount = { pageCount.coerceAtLeast(1) })
 
         Box(modifier = Modifier.fillMaxSize()) {
+
+            // Top Delete Zone
             AnimatedVisibility(
                 visible = isGridInDragMode,
                 enter   = slideInVertically { -it } + fadeIn(),
@@ -181,10 +242,14 @@ fun AppGrid(
                     modifier = Modifier.weight(1f),
                     userScrollEnabled = !isGridInDragMode
                 ) { pageIndex ->
+                    val mixedItems: List<GridItem> = buildList {
+                        folders.forEach { add(GridItem.Folder(it)) }
+                        freeApps.forEach { add(GridItem.App(it)) }
+                    }
                     val startIndex = pageIndex * itemsPerPage
-                    val endIndex   = (startIndex + itemsPerPage).coerceAtMost(allApps.size)
-                    val pageApps   = if (startIndex < allApps.size)
-                        allApps.subList(startIndex, endIndex) else emptyList()
+                    val endIndex   = (startIndex + itemsPerPage).coerceAtMost(mixedItems.size)
+                    val pageItems  = if (startIndex < mixedItems.size)
+                        mixedItems.subList(startIndex, endIndex) else emptyList()
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnCount),
@@ -196,81 +261,191 @@ fun AppGrid(
                         userScrollEnabled     = false,
                         contentPadding        = PaddingValues(vertical = 10.dp)
                     ) {
-                        items(items = pageApps, key = { it.packageName }) { app ->
-                            val isItemDragging = draggingPackage == app.packageName
-                            Box(
-                                modifier = Modifier
-                                    .animateItem(
-                                        fadeInSpec  = null,
-                                        fadeOutSpec = null,
-                                        placementSpec = spring(
-                                            stiffness = Spring.StiffnessMediumLow,
-                                            visibilityThreshold = IntOffset.VisibilityThreshold
-                                        )
-                                    )
-                                    .onGloballyPositioned { coords ->
-                                        if (coords.isAttached)
-                                            itemBounds[app.packageName] = coords.boundsInWindow()
-                                    }
-                                    .zIndex(if (isItemDragging) 0f else 1f)
-                            ) {
-                                AppIconItem(
-                                    app             = app,
-                                    iconSize        = iconSize,
-                                    fontSize        = fontSize,
-                                    showLabel       = showLabels,
-                                    accentColor     = accentColor,
-                                    isDragging      = isItemDragging,
-                                    isGridInDragMode = isGridInDragMode,
-                                    micaParams      = micaParams,
-                                    onPinRequest    = onPinRequest,
-                                    onClose         = onClose ?: {},
-                                    badgeCount      = notifCounts[app.packageName] ?: 0,
-                                    viewModel       = viewModel,
-                                    onDragStart     = { iconAbsolutePos ->
-                                        if (searchQuery.isEmpty()) {
-                                            ghostInitialPosition = iconAbsolutePos
-                                            draggingOffset = Offset.Zero
-                                        }
-                                    },
-                                    onDrag = { dragAmount ->
-                                        draggingOffset += dragAmount
-                                        if (draggingPackage == null) {
-                                            if (draggingOffset.getDistance() > 30f) {
-                                                draggingPackage = app.packageName
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            }
-                                        } else {
-                                            val ghostCenter = ghostInitialPosition + draggingOffset +
-                                                    Offset((iconSize / 2).dp.value, (iconSize / 2).dp.value)
-                                            isHoveringDelete = ghostCenter.y < 350f
+                        items(items = pageItems, key = { item ->
+                            when (item) {
+                                is GridItem.App    -> item.app.packageName
+                                is GridItem.Folder -> item.folder.id
+                            }
+                        }) { item ->
+                            when (item) {
+                                is GridItem.Folder -> {
+                                    val folder = item.folder
+                                    val isHovering = hoveringFolderId == folder.id
 
-                                            if (!isHoveringDelete) {
-                                                val targetPkg = itemBounds.entries
-                                                    .find { (_, bounds) -> bounds.contains(ghostCenter) }?.key
-                                                if (targetPkg != null && targetPkg != draggingPackage) {
-                                                    val fromIdx = allApps.indexOfFirst { it.packageName == draggingPackage }
-                                                    val toIdx   = allApps.indexOfFirst { it.packageName == targetPkg }
-                                                    val now     = System.currentTimeMillis()
-                                                    if (fromIdx != -1 && toIdx != -1 && now - lastSwapTime > 200) {
-                                                        viewModel.moveApp(fromIdx, toIdx)
+                                    Box(
+                                        modifier = Modifier
+                                            .animateItem()
+                                            .onGloballyPositioned { coords ->
+                                                if (coords.isAttached)
+                                                    itemBounds["folder_${folder.id}"] = coords.boundsInWindow()
+                                            }
+                                            .scale(if (isHovering) 1.08f else 1f)
+                                    ) {
+                                        FolderIconItem(
+                                            folder = folder,
+                                            iconSize = iconSize,
+                                            fontSize = fontSize,
+                                            showLabel = showLabels,
+                                            accentColor = accentColor,
+                                            micaParams = micaParams,
+                                            isTransparencyEnabled = isTransparencyEnabled,
+                                            onClick = { openFolderId = folder.id },
+                                            onLongPress = {
+                                                // Dissolve folder
+                                                folders = folders.filter { it.id != folder.id }
+                                            }
+                                        )
+                                    }
+                                }
+
+                                is GridItem.App -> {
+                                    val app = item.app
+                                    val isItemDragging = draggingPackage == app.packageName
+                                    val isTargeted = hoveringAppId == app.packageName
+
+                                    Box(
+                                        modifier = Modifier
+                                            .animateItem(
+                                                fadeInSpec  = null,
+                                                fadeOutSpec = null,
+                                                placementSpec = spring(
+                                                    stiffness = Spring.StiffnessMediumLow,
+                                                    visibilityThreshold = IntOffset.VisibilityThreshold
+                                                )
+                                            )
+                                            .onGloballyPositioned { coords ->
+                                                if (coords.isAttached)
+                                                    itemBounds[app.packageName] = coords.boundsInWindow()
+                                            }
+                                            .zIndex(if (isItemDragging) 0f else 1f)
+                                    ) {
+                                        AppIconItem(
+                                            app              = app,
+                                            iconSize         = iconSize,
+                                            fontSize         = fontSize,
+                                            showLabel        = showLabels,
+                                            accentColor      = accentColor,
+                                            isDragging       = isItemDragging,
+                                            isGridInDragMode = isGridInDragMode,
+                                            isHoveredForFolder = isTargeted,
+                                            micaParams       = micaParams,
+                                            onPinRequest     = onPinRequest,
+                                            onClose          = onClose ?: {},
+                                            badgeCount       = notifCounts[app.packageName] ?: 0,
+                                            viewModel        = viewModel,
+                                            onDragStart      = { iconAbsolutePos ->
+                                                if (searchQuery.isEmpty()) {
+                                                    ghostInitialPosition = iconAbsolutePos
+                                                    draggingOffset = Offset.Zero
+                                                }
+                                            },
+                                            onDrag = { dragAmount ->
+                                                draggingOffset += dragAmount
+                                                if (draggingPackage == null) {
+                                                    // Threshold before locking into drag mode
+                                                    if (draggingOffset.getDistance() > 15f) {
+                                                        draggingPackage = app.packageName
                                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                        lastSwapTime = now
+                                                    }
+                                                } else {
+                                                    val ghostCenter = ghostInitialPosition + draggingOffset +
+                                                            Offset((iconSize / 2).dp.value, (iconSize / 2).dp.value)
+
+                                                    isHoveringDelete = ghostCenter.y < 350f
+
+                                                    if (!isHoveringDelete) {
+                                                        // 1. Detect Folder Hover (Strict Hitbox)
+                                                        val hoveredFolder = folders.find { f ->
+                                                            val bnds = itemBounds["folder_${f.id}"]
+                                                            bnds != null && shrinkRect(bnds).contains(ghostCenter)
+                                                        }
+
+                                                        if (hoveredFolder != null) {
+                                                            hoveringFolderId = hoveredFolder.id
+                                                            hoveringAppId = null
+                                                        } else {
+                                                            hoveringFolderId = null
+
+                                                            // 2. Detect App Hover (Strict Hitbox)
+                                                            val targetPkg = itemBounds.entries
+                                                                .filter { !it.key.startsWith("folder_") && it.key != draggingPackage }
+                                                                .find { (_, bounds) -> shrinkRect(bounds).contains(ghostCenter) }?.key
+
+                                                            if (targetPkg != null) {
+                                                                if (hoveringAppId != targetPkg) {
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    hoveringAppId = targetPkg
+                                                                }
+                                                            } else {
+                                                                hoveringAppId = null
+                                                            }
+                                                        }
+                                                    } else {
+                                                        hoveringFolderId = null
+                                                        hoveringAppId = null
                                                     }
                                                 }
+                                            },
+                                            onDragEnd = {
+                                                val hovFolder = hoveringFolderId?.let { fid -> folders.find { it.id == fid } }
+                                                val targetAppPkg = hoveringAppId
+                                                val draggedApp = freeApps.find { it.packageName == draggingPackage }
+
+                                                when {
+                                                    // Drop on Delete
+                                                    isHoveringDelete && draggingPackage != null -> {
+                                                        AppActions.uninstallApp(context, draggingPackage!!)
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    }
+                                                    // Commit Drop on Folder
+                                                    hovFolder != null && draggedApp != null -> {
+                                                        folders = folders.map { f ->
+                                                            if (f.id == hovFolder.id && f.apps.none { it.packageName == draggedApp.packageName })
+                                                                f.copy(apps = f.apps + draggedApp)
+                                                            else f
+                                                        }
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    }
+                                                    // Commit Drop on App (Create Folder)
+                                                    targetAppPkg != null && draggedApp != null -> {
+                                                        val targetApp = freeApps.find { it.packageName == targetAppPkg }
+                                                        if (targetApp != null) {
+                                                            val newFolder = AppFolder(
+                                                                id   = UUID.randomUUID().toString(),
+                                                                name = "Dossier",
+                                                                apps = listOf(targetApp, draggedApp)
+                                                            )
+                                                            folders = folders + newFolder
+                                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        }
+                                                    }
+                                                    // Normal Swap / Reorder
+                                                    draggingPackage != null -> {
+                                                        val fromIdx = freeApps.indexOfFirst { it.packageName == draggingPackage }
+                                                        val ghostCenter = ghostInitialPosition + draggingOffset + Offset((iconSize / 2).dp.value, (iconSize / 2).dp.value)
+                                                        // Relaxed bounds for standard swapping
+                                                        val swapTargetPkg = itemBounds.entries
+                                                            .filter { !it.key.startsWith("folder_") && it.key != draggingPackage }
+                                                            .find { (_, bounds) -> bounds.contains(ghostCenter) }?.key
+
+                                                        val toIdx = freeApps.indexOfFirst { it.packageName == swapTargetPkg }
+
+                                                        if (fromIdx != -1 && toIdx != -1) {
+                                                            viewModel.moveApp(fromIdx, toIdx)
+                                                        }
+                                                    }
+                                                }
+
+                                                // Cleanup State
+                                                draggingPackage  = null
+                                                draggingOffset   = Offset.Zero
+                                                isHoveringDelete = false
+                                                hoveringFolderId = null
+                                                hoveringAppId    = null
                                             }
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        if (isHoveringDelete && draggingPackage != null) {
-                                            AppActions.uninstallApp(context, draggingPackage!!)
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        }
-                                        draggingPackage  = null
-                                        draggingOffset   = Offset.Zero
-                                        isHoveringDelete = false
+                                        )
                                     }
-                                )
+                                }
                             }
                         }
                     }
@@ -283,10 +458,52 @@ fun AppGrid(
             }
 
             if (draggingPackage != null) {
-                val draggedApp = allApps.find { it.packageName == draggingPackage }
+                val draggedApp = freeApps.find { it.packageName == draggingPackage }
                 if (draggedApp != null) {
                     val currentPos = ghostInitialPosition + draggingOffset
                     GhostIcon(draggedApp, currentPos, iconSize, isHoveringDelete)
+                }
+            }
+
+            AnimatedVisibility(
+                visible = openFolder != null,
+                enter   = fadeIn() + scaleIn(initialScale = 0.9f),
+                exit    = fadeOut() + scaleOut(targetScale = 0.9f),
+                modifier = Modifier.zIndex(200f)
+            ) {
+                openFolder?.let { folder ->
+                    FolderOverlay(
+                        folder = folder,
+                        iconSize = iconSize,
+                        fontSize = fontSize,
+                        accentColor = accentColor,
+                        micaParams = micaParams,
+                        isTransparencyEnabled = isTransparencyEnabled,
+                        onDismiss = { openFolderId = null },
+                        onRename = { newName ->
+                            folders = folders.map {
+                                if (it.id == folder.id) it.copy(name = newName) else it
+                            }
+                        },
+                        onAppLaunch = { app ->
+                            val intent = context.packageManager
+                                .getLaunchIntentForPackage(app.packageName)
+                            if (intent != null) {
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            }
+                        },
+                        onRemoveApp = { app ->
+                            folders = folders.map { f ->
+                                if (f.id == folder.id)
+                                    f.copy(apps = f.apps.filter {
+                                        it.packageName != app.packageName
+                                    })
+                                else f
+                            }.filter { it.apps.isNotEmpty() }
+                            openFolderId = null
+                        }
+                    )
                 }
             }
         }
@@ -306,6 +523,7 @@ private fun AppIconItem(
     accentColor:     Color,
     isDragging:      Boolean,
     isGridInDragMode: Boolean,
+    isHoveredForFolder: Boolean,
     micaParams:      MicaParams,
     onPinRequest:    (AppModel) -> Unit,
     onClose:         () -> Unit,
@@ -321,27 +539,20 @@ private fun AppIconItem(
     val density  = LocalDensity.current
     val smartTextColor = micaParams.primaryColor
 
-    var showMenu     by remember { mutableStateOf(false) }
+    var showMenu      by remember { mutableStateOf(false) }
     var itemWindowPos by remember { mutableStateOf(Offset.Zero) }
-    var isPressed    by remember { mutableStateOf(false) }
-    var hasMoved     by remember { mutableStateOf(false) }
+    var isPressed     by remember { mutableStateOf(false) }
+    var hasMoved      by remember { mutableStateOf(false) }
 
-    // FIX 3 — Animation d'épinglage.
-    // isPinning déclenche un flash scale 1→1.3→1 puis onPinRequest + onClose.
     var isPinning by remember { mutableStateOf(false) }
     val pinScale by animateFloatAsState(
-        targetValue   = if (isPinning) 1.25f else 1f,
+        targetValue = if (isPinning) 1.25f else 1f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness    = Spring.StiffnessMedium
         ),
         finishedListener = { _ ->
-            // Quand le spring retombe à 1f, on exécute le pin
-            if (isPinning) {
-                isPinning = false
-                onPinRequest(app)
-                onClose()
-            }
+            if (isPinning) { isPinning = false; onPinRequest(app); onClose() }
         },
         label = "pin_scale"
     )
@@ -349,19 +560,26 @@ private fun AppIconItem(
     LaunchedEffect(isDragging) { if (isDragging) showMenu = false }
 
     val pressScale by animateFloatAsState(
-        targetValue   = if (isPressed) 0.93f else 1f,
+        targetValue = if (isPressed) 0.93f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessHigh),
-        label         = "press_scale"
+        label = "press_scale"
     )
+
+    val targetScale by animateFloatAsState(
+        targetValue = if (isHoveredForFolder) 1.15f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "hover_scale"
+    )
+
     val dimAlpha by animateFloatAsState(
         targetValue = when {
             isGridInDragMode && isDragging -> 0f
-            isGridInDragMode               -> 0.5f
-            else                           -> 1f
+            isGridInDragMode && !isHoveredForFolder -> 0.5f
+            isGridInDragMode && isHoveredForFolder -> 1f
+            else -> 1f
         },
         label = "dim"
     )
-
     val isTransparencyEnabled by viewModel.transparencyEnabled.collectAsState()
 
     Box(
@@ -369,22 +587,12 @@ private fun AppIconItem(
             .onGloballyPositioned { coords ->
                 if (coords.isAttached) itemWindowPos = coords.positionInWindow()
             }
-            // pinScale enveloppe pressScale pour que les deux s'appliquent
             .graphicsLayer {
-                scaleX = pinScale * pressScale
-                scaleY = pinScale * pressScale
+                val finalScale = pinScale * pressScale * targetScale
+                scaleX = finalScale
+                scaleY = finalScale
                 alpha  = dimAlpha
             }
-            // ── FIX 2 : onLongPress dans detectTapGestures ────────────────────
-            // Un seul bloc pointerInput gère tap + long press + press visual.
-            // detectDragGesturesAfterLongPress gère UNIQUEMENT le drag pur.
-            //
-            // Avant : showMenu était mis à true dans onDragEnd quand !hasMoved.
-            // Problème : l'UP event était parfois consommé par detectTapGestures
-            // avant que onDragEnd le voie → menu aléatoire au premier appui.
-            //
-            // Fix : onLongPress est appelé de façon synchrone par le framework
-            // dès que le seuil est atteint, sans dépendre de l'UP event.
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -396,13 +604,13 @@ private fun AppIconItem(
                             scope.launch {
                                 delay(50)
                                 val sizePx = with(density) { iconSize.dp.roundToPx() }
-                                AppLauncher.launch(context, null, app.packageName, itemWindowPos, sizePx)
+                                AppLauncher.launch(
+                                    context, null, app.packageName, itemWindowPos, sizePx
+                                )
                             }
                         }
                     },
                     onLongPress = {
-                        // Long press sans drag → ouvre le menu contexte immédiatement.
-                        // Fiable car ce bloc contrôle déjà le pointer ici.
                         if (!isPinning && !showMenu) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             showMenu = true
@@ -410,14 +618,10 @@ private fun AppIconItem(
                     }
                 )
             }
-            // ── Drag pur — ne touche plus au menu ─────────────────────────────
             .pointerInput(Unit) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
-                        isPressed = true
-                        hasMoved  = false
-                        // Si le menu est déjà ouvert via onLongPress, on le ferme
-                        showMenu  = false
+                        isPressed = true; hasMoved = false; showMenu = false
                         onDragStart(itemWindowPos)
                     },
                     onDrag = { change, dragAmount ->
@@ -425,15 +629,8 @@ private fun AppIconItem(
                         if (dragAmount.getDistance() > 2f) hasMoved = true
                         onDrag(dragAmount)
                     },
-                    onDragEnd = {
-                        isPressed = false
-                        // Plus de showMenu ici — géré exclusivement par onLongPress
-                        onDragEnd()
-                    },
-                    onDragCancel = {
-                        isPressed = false
-                        onDragEnd()
-                    }
+                    onDragEnd    = { isPressed = false; onDragEnd() },
+                    onDragCancel = { isPressed = false; onDragEnd() }
                 )
             },
         contentAlignment = Alignment.TopCenter
@@ -448,7 +645,6 @@ private fun AppIconItem(
                     modifier    = Modifier.size(iconSize.dp)
                 )
             }
-
             if (showLabel) {
                 Text(
                     text      = app.label,
@@ -466,19 +662,13 @@ private fun AppIconItem(
 
         if (showMenu && !isDragging) {
             FluentContextMenu(
-                app          = app,
-                iconPosition = itemWindowPos,
-                iconHeight   = with(density) { (iconSize + 30).dp.toPx() },
-                iconSize     = iconSize,
-                onDismiss    = { showMenu = false },
-                isDark       = isSystemInDarkTheme(),
-                // FIX 3 — au lieu d'appeler directement onPinRequest, on déclenche
-                // l'animation de pin. finishedListener appellera onPinRequest quand
-                // le spring sera retombé (≈ 200ms), donnant le feedback visuel.
-                onPin = {
-                    showMenu  = false
-                    isPinning = true
-                },
+                app                   = app,
+                iconPosition          = itemWindowPos,
+                iconHeight            = with(density) { (iconSize + 30).dp.toPx() },
+                iconSize              = iconSize,
+                onDismiss             = { showMenu = false },
+                isDark                = isSystemInDarkTheme(),
+                onPin                 = { showMenu = false; isPinning = true },
                 micaParams            = micaParams,
                 isTransparencyEnabled = isTransparencyEnabled
             )
@@ -582,7 +772,9 @@ private fun WindowsStyleScrollbar(state: LazyGridState, isDark: Boolean, modifie
 // =============================================================================
 
 @Composable
-private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHoveringDelete: Boolean) {
+private fun GhostIcon(
+    app: AppModel, currentPos: Offset, iconSize: Float, isHoveringDelete: Boolean
+) {
     Box(
         modifier = Modifier
             .offset { IntOffset(currentPos.x.roundToInt(), currentPos.y.roundToInt()) }
@@ -591,9 +783,7 @@ private fun GhostIcon(app: AppModel, currentPos: Offset, iconSize: Float, isHove
     ) {
         InternalAppIcon(
             app.packageName,
-            Modifier
-                .size(iconSize.dp)
-                .shadow(16.dp, AppIconShape)
+            Modifier.size(iconSize.dp).shadow(16.dp, AppIconShape)
         )
     }
 }
@@ -607,7 +797,7 @@ private fun WindowsDeleteZone(isHovering: Boolean, isDark: Boolean) {
     val bgColor      = if (isHovering) Color(0xFFC42B1C)
     else if (isDark) Color(0xFF2C2C2C) else Color(0xFFF3F3F3)
     val contentColor = if (isHovering) Color.White
-    else if (isDark) Color.White      else Color.Black
+    else if (isDark) Color.White else Color.Black
     val scale by animateFloatAsState(if (isHovering) 1.1f else 1f, label = "del_scale")
     Row(
         Modifier
@@ -617,12 +807,22 @@ private fun WindowsDeleteZone(isHovering: Boolean, isDark: Boolean) {
             .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(8.dp)),
-        verticalAlignment   = Alignment.CenterVertically,
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Icon(FluentIcons.Regular.Delete, null, tint = contentColor, modifier = Modifier.size(20.dp))
+        Icon(
+            imageVector        = FluentIcons.Regular.Delete,
+            contentDescription = stringResource(R.string.content_desc_delete_icon),
+            tint               = contentColor,
+            modifier           = Modifier.size(20.dp)
+        )
         Spacer(Modifier.width(10.dp))
-        Text("Désinstaller", color = contentColor, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        Text(
+            text       = stringResource(R.string.delete_zone_label),
+            color      = contentColor,
+            fontWeight = FontWeight.Medium,
+            fontSize   = 14.sp
+        )
     }
 }
 
@@ -647,7 +847,12 @@ private fun MicaSectionHeader(letter: Char, isDark: Boolean, micaParams: MicaPar
                         else Color.White.copy(0.4f)
                     )
             )
-            Text(letter.toString(), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = smartTextColor)
+            Text(
+                letter.toString(),
+                fontWeight = FontWeight.Bold,
+                fontSize   = 18.sp,
+                color      = smartTextColor
+            )
         }
     }
 }
@@ -698,7 +903,7 @@ object AppLauncher {
     fun launch(ctx: Context, view: android.view.View?, pkg: String, pos: Offset, sizePx: Int) {
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg) ?: return
         try {
-            val opts = if (view != null) ActivityOptions.makeScaleUpAnimation(
+            val opts = if (view != null) android.app.ActivityOptions.makeScaleUpAnimation(
                 view, pos.x.toInt(), pos.y.toInt(), sizePx, sizePx
             ).toBundle() else null
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

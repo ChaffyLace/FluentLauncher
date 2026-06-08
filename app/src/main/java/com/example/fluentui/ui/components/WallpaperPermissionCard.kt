@@ -30,11 +30,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.example.fluentui.R
 
 private const val TAG = "WallpaperPermission"
 
@@ -90,7 +92,7 @@ fun WallpaperPermissionCard(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Wallpaper Access Required",
+                    text = stringResource(R.string.wp_permission_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -98,7 +100,7 @@ fun WallpaperPermissionCard(viewModel: AppViewModel) {
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "To apply the Fluent blur effect (Mica), this launcher requires permission to read your current wallpaper.",
+                    text = stringResource(R.string.wp_permission_desc),
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -110,7 +112,7 @@ fun WallpaperPermissionCard(viewModel: AppViewModel) {
                     onClick = { launchSettingsForPermission(context) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Grant Permission")
+                    Text(text = stringResource(R.string.wp_permission_btn))
                 }
             }
         }

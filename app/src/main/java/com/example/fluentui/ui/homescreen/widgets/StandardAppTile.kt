@@ -21,100 +21,80 @@ import com.example.fluentui.ui.system.TileSize
 import fluent.ui.system.icons.FluentIcons
 import fluent.ui.system.icons.color.*
 
+
 @Composable
 fun StandardAppTile(
-    config:            TileConfig,
-    contentColor:      Color,
+    config: TileConfig,
+    contentColor: Color,
     notificationCount: Int = 0
 ) {
-    val customIcon = remember(config.packageName) { getCustomFluentIcon(config.packageName) }
-
-    val iconSize = when (config.size) {
-        TileSize.TINY   -> 28.dp
-        TileSize.SMALL  -> 44.dp
-        TileSize.MEDIUM -> 52.dp
-        TileSize.LARGE  -> 64.dp
+    val customIcon = remember(config.packageName) {
+        getCustomFluentIcon(config.packageName)
     }
 
-    when (config.size) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(6.dp) // padding global léger
+    ) {
 
-        // ── TINY — icône seule, centrée ──────────────────────────────────────
-        TileSize.TINY -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                SharedAppIcon(config.packageName, customIcon, iconSize, notificationCount)
-            }
+        val tileWidth = maxWidth
+        val tileHeight = maxHeight
+
+        val iconSize = minOf(tileWidth, tileHeight) * when (config.size) {
+            TileSize.TINY   -> 0.60f
+            TileSize.SMALL  -> 0.40f
+            TileSize.MEDIUM -> 0.40f
+            TileSize.LARGE  -> 0.25f
         }
 
-        // ── SMALL — icône centrée, label en bas ───────────────────────────────
-        TileSize.SMALL -> {
-            Column(
-                modifier            = Modifier.fillMaxSize().padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                SharedAppIcon(config.packageName, customIcon, iconSize, notificationCount)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text       = config.title,
-                    fontSize   = 11.sp,
-                    color      = contentColor,
-                    fontWeight = FontWeight.Medium,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis,
-                    lineHeight = 14.sp
-                )
-            }
-        }
+        val textSize = (minOf(tileWidth, tileHeight).value * when (config.size) {
+            TileSize.SMALL  -> 0.12f
+            TileSize.MEDIUM -> 0.12f
+            TileSize.LARGE  -> 0.07f
+            else            -> 0.08f
+        }).sp
 
-        // ── MEDIUM (4×2) — icône à gauche verticalement centrée, label à droite
-        TileSize.MEDIUM -> {
-            Row(
-                modifier          = Modifier.fillMaxSize().padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SharedAppIcon(config.packageName, customIcon, iconSize, notificationCount)
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text       = config.title,
-                    fontSize   = 14.sp,
-                    color      = contentColor,
-                    fontWeight = FontWeight.Medium,
-                    maxLines   = 2,
-                    overflow   = TextOverflow.Ellipsis,
-                    lineHeight = 18.sp
-                )
-            }
-        }
+        Box(Modifier.fillMaxSize()) {
 
-        // ── LARGE (4×4) — icône centrée en haut, label en bas à gauche ────────
-        TileSize.LARGE -> {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(12.dp)
-            ) {
-                SharedAppIcon(
-                    packageName       = config.packageName,
-                    customIcon        = customIcon,
-                    iconSize          = iconSize,
-                    notificationCount = notificationCount,
-                    modifier          = Modifier.align(Alignment.Center)
-                )
+            val iconModifier = when (config.size) {
+                TileSize.TINY -> Modifier.align(Alignment.Center)
+                TileSize.SMALL -> Modifier.align(Alignment.Center)
+                TileSize.MEDIUM -> Modifier.align(Alignment.Center)
+                TileSize.LARGE -> Modifier.align(Alignment.Center)
+            }
+
+            SharedAppIcon(
+                packageName = config.packageName,
+                customIcon = customIcon,
+                iconSize = iconSize,
+                notificationCount = notificationCount,
+                modifier = iconModifier
+            )
+
+            if (config.size != TileSize.TINY) {
+
+                val horizontalPadding = tileWidth * 0.05f
+                val bottomPadding = tileHeight * 0.06f
+
                 Text(
-                    text       = config.title,
-                    fontSize   = 14.sp,
-                    color      = contentColor,
+                    text = config.title,
+                    color = contentColor,
+                    fontSize = textSize,
                     fontWeight = FontWeight.Medium,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis,
-                    lineHeight = 14.sp,
-                    modifier   = Modifier
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .fillMaxWidth()
+                        .padding(
+                            start = horizontalPadding,
+                            bottom = bottomPadding
+                        )
                 )
             }
         }
     }
 }
-
 @Composable
 fun SharedAppIcon(
     packageName:       String,

@@ -4,21 +4,20 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-/**
- * Main Database configuration.
- * Includes a manual migration (1 to 2) to add the isDynamic column without data loss.
- */
 @Database(
-    entities = [TileEntity::class],
-    version = 2,
+    entities = [TileEntity::class, FolderEntity::class], // Ajout de FolderEntity
+    version = 3, // Passage à la version 3
     exportSchema = false
 )
+@TypeConverters(Converters::class) // Activation des convertisseurs Gson
 abstract class TileDatabase : RoomDatabase() {
 
     abstract fun tileDao(): TileDao
+    abstract fun folderDao(): FolderDao // Accès au nouveau DAO
 
     companion object {
         @Volatile
@@ -30,6 +29,13 @@ abstract class TileDatabase : RoomDatabase() {
             }
         }
 
+        // Nouvelle migration pour ajouter la table sans perdre les tuiles existantes
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `drawer_folders` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `apps` TEXT NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+
         fun getDatabase(context: Context): TileDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -37,7 +43,7 @@ abstract class TileDatabase : RoomDatabase() {
                     TileDatabase::class.java,
                     "fluent_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
 

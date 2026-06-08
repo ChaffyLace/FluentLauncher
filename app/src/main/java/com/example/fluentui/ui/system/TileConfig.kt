@@ -1,6 +1,7 @@
 package com.example.fluentui.ui.system
 
 import android.graphics.drawable.Drawable
+import androidx.compose.runtime.Stable
 
 // ============================================================================
 // TILE TYPE
@@ -21,7 +22,7 @@ enum class TileType {
 }
 
 // ============================================================================
-// TILE SIZE
+// TILE SIZE (GRID BASED)
 // ============================================================================
 
 enum class TileSize(val cols: Int, val rows: Int) {
@@ -36,41 +37,60 @@ enum class TileSize(val cols: Int, val rows: Int) {
 // ============================================================================
 
 sealed class TileIcon {
-    // Icône système Android — ViewModel charge le Drawable via PackageManager
     data class AndroidIcon(val drawable: Drawable) : TileIcon()
-    // Ressource locale (R.drawable.xxx)
     data class ResourceIcon(val resId: Int) : TileIcon()
-    // URI externe (image choisie par l'utilisateur)
     data class UriIcon(val uri: String) : TileIcon()
 }
 
-// ============================================================================
-// TILE CONFIG
-//
-// IMPORTANT — pas @Immutable ici.
-// @Immutable dit à Compose de skip la recomposition si la référence n'a pas
-// changé. Or gridX et gridY sont mutés directement par DashboardGrid via une
-// extension property — Compose ne verrait jamais les changements et les tuiles
-// ne se repositionneraient pas après un drag.
-//
-// On utilise @Stable à la place : Compose sait que les lectures de champs
-// notifient les snapshots, mais reste libre de recomposer quand les valeurs
-// changent. C'est le contrat correct pour un objet mutable-mais-observé.
-// ============================================================================
 
-@androidx.compose.runtime.Stable
+@Stable
 data class TileConfig(
-    val id:          String,
-    val title:       String,
-    val icon:        TileIcon? = null,
-    val size:        TileSize  = TileSize.SMALL,
-    val type:        TileType  = TileType.APPLICATION,
-    val packageName: String    = "",
-    var gridX:       Int       = -1,
-    var gridY:       Int       = -1,
-    val isDynamic:   Boolean   = true
-) {
-    fun move(x: Int, y: Int): TileConfig = copy(gridX = x, gridY = y)
+    val id: String,
+    val title: String,
 
-    val label: String get() = title
+    val icon: TileIcon? = null,
+    val type: TileType = TileType.APPLICATION,
+
+    val packageName: String = "",
+
+    val size: TileSize = TileSize.SMALL,
+
+    var gridX: Int = -1,
+    var gridY: Int = -1,
+    val zone: String = "dashboard",
+
+    val isDynamic: Boolean = true
+) {
+
+    // ───────── GRID HELPERS ─────────
+
+    val width: Int
+        get() = size.cols
+
+    val height: Int
+        get() = size.rows
+
+    val isSmall: Boolean
+        get() = width == 1 && height == 1
+
+    val isMedium: Boolean
+        get() = width == 2 && height == 2
+
+    val isLarge: Boolean
+        get() = width >= 4 || height >= 4
+
+    // ───────── DISPLAY ─────────
+
+    val label: String
+        get() = title
+
+    val normalizedPackage: String
+        get() = packageName.lowercase().trim()
+
+    // ───────── ACTIONS ─────────
+
+    fun move(x: Int, y: Int): TileConfig = copy(
+        gridX = x,
+        gridY = y
+    )
 }

@@ -1,10 +1,13 @@
+/**
+ * @file SettingsOverlay.kt
+ * @description Master router and container for the settings experience.
+ * Broadcasts Mica globally and enforces system-driven Light/Dark mode.
+ */
+
 package com.example.fluentui.ui.settings
 
 import androidx.activity.compose.BackHandler
-import android.app.UiModeManager
-import android.content.Context
-import android.os.Build
-import androidx.compose.ui.platform.LocalContext
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,8 +20,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.fluentui.data.SettingsManager
 import com.example.fluentui.ui.components.AppModel
 import com.example.fluentui.wallpaper.MicaParams
+
+val LocalMicaParams = compositionLocalOf<MicaParams?> { null }
 
 @Composable
 fun SettingsOverlay(
@@ -26,39 +32,55 @@ fun SettingsOverlay(
     micaParams: MicaParams?,
     allApps: List<AppModel>,
     onDismiss: () -> Unit,
+    settingsManager: SettingsManager,
     viewModel: SettingsViewModel = viewModel(),
     onWallpaperChangeClick: () -> Unit
 ) {
-    AnimatedVisibility(
-        visible = isVisible,
-        enter = slideInVertically(initialOffsetY = { it / 10 }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it / 10 }) + fadeOut(),
-        modifier = Modifier.zIndex(100f)
-    ) {
-        SettingsScreenContent(
-            micaParams = micaParams,
-            onDismiss = onDismiss,
-            viewModel = viewModel,
-            allApps = allApps,
-            onOpenGallery = onWallpaperChangeClick
-        )
+    CompositionLocalProvider(LocalMicaParams provides micaParams) {
+        AnimatedVisibility(
+            visible = isVisible,
+            enter = slideInVertically(initialOffsetY = { it / 10 }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it / 10 }) + fadeOut(),
+            modifier = Modifier.zIndex(100f)
+        ) {
+            SettingsScreenContent(
+                onDismiss = onDismiss,
+                viewModel = viewModel,
+                settingsManager = settingsManager,
+                allApps = allApps,
+                onOpenGallery = onWallpaperChangeClick
+            )
+        }
     }
 }
 
 @Composable
 private fun SettingsScreenContent(
-    micaParams: MicaParams?,
     onDismiss: () -> Unit,
     viewModel: SettingsViewModel,
+    settingsManager: SettingsManager,
     allApps: List<AppModel>,
     onOpenGallery: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsState()
     var currentPage by remember { mutableStateOf(SettingsPageType.HOME) }
     val isDark = isSystemInDarkTheme()
+    val currentMicaParams = LocalMicaParams.current
 
-    BackHandler(enabled = currentPage != SettingsPageType.HOME) {
-        currentPage = SettingsPageType.HOME
+    LaunchedEffect(Unit) {
+        try {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        } catch (e: Exception) {
+            // Silently ignore — theme will fall back to system default
+        }
+    }
+
+    BackHandler(enabled = true) {
+        if (currentPage != SettingsPageType.HOME) {
+            currentPage = SettingsPageType.HOME
+        } else {
+            onDismiss()
+        }
     }
 
     Box(
@@ -69,8 +91,8 @@ private fun SettingsScreenContent(
                 indication = null
             ) { }
     ) {
-        if (state.transparencyEnabled && micaParams != null) {
-            MicaSolidBackground(micaParams = micaParams, isDark = isDark)
+        if (state.transparencyEnabled && currentMicaParams != null) {
+            MicaSolidBackground(micaParams = currentMicaParams, isDark = isDark)
         } else {
             val fallbackColor = if (isDark) Color(0xFF202020) else Color(0xFFF3F3F3)
             Box(Modifier.fillMaxSize().background(fallbackColor))
@@ -99,44 +121,48 @@ private fun SettingsScreenContent(
             ) { page ->
                 when (page) {
                     SettingsPageType.HOME -> {
-                        val context = LocalContext.current
                         HomePage(
                             state = state,
+                            settingsManager = settingsManager,
                             onNavigate = { currentPage = it },
-                            onSetAccent = viewModel::setAccentColor,
-                            onSetWallpaper = viewModel::setWallpaper,
-                            onSetDarkMode = { isDark ->
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                    val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
-                                    uiModeManager.setApplicationNightMode(
-                                        if (isDark) UiModeManager.MODE_NIGHT_YES
-                                        else UiModeManager.MODE_NIGHT_NO
-                                    )
-                                }
-                            }
+                            onSetAccent = { color -> viewModel.setAccentColor(color) },
+                            onSetWallpaper = { type, value -> viewModel.setWallpaper(type, value) }
                         )
                     }
                     SettingsPageType.BACKGROUND -> BackgroundPage(
                         state = state,
-                        onSetWallpaper = viewModel::setWallpaper,
+                        onSetWallpaper = { type, value -> viewModel.setWallpaper(type, value) },
                         onOpenGallery = onOpenGallery
                     )
                     SettingsPageType.COLOR -> ColorPage(
                         state = state,
-                        onSetAccent = viewModel::setAccentColor,
-                        onSetTransparency = viewModel::setTransparency
+                        onSetAccent = { color -> viewModel.setAccentColor(color) },
+                        onSetTransparency = { enabled -> viewModel.setTransparency(enabled) }
                     )
                     SettingsPageType.LAYOUT -> LayoutPage(
                         state = state,
                         allApps = allApps,
-                        onSetCols = viewModel::setColumnCount,
-                        onSetRows = viewModel::setRowCount,
-                        onSetIconSize = viewModel::setIconSize,
-                        onSetFontSize = viewModel::setFontSize,
-                        onSetSpacing = viewModel::setVerticalSpacing,
-                        onSetLabels = viewModel::setShowLabels,
-                        onSetVertical = viewModel::setVerticalScroll,
-                        onSetHidden = viewModel::setAppHidden
+                        onSetCols = { cols -> viewModel.setColumnCount(cols) },
+                        onSetRows = { rows -> viewModel.setRowCount(rows) },
+                        onSetIconSize = { size -> viewModel.setIconSize(size) },
+                        onSetFontSize = { size -> viewModel.setFontSize(size) },
+                        onSetSpacing = { spacing -> viewModel.setVerticalSpacing(spacing) },
+                        onSetLabels = { show -> viewModel.setShowLabels(show) },
+                        onSetVertical = { isVert -> viewModel.setVerticalScroll(isVert) },
+                        onSetHidden = { pkg, hidden -> viewModel.setAppHidden(pkg, hidden) },
+                        onSetShowDrawerSearch = { show -> viewModel.setShowDrawerSearch(show) },
+                        onSetAutoKeyboard = { auto -> viewModel.setAutoOpenKeyboard(auto) }
+                    )
+                    SettingsPageType.GESTURES -> GesturesPage(
+                        state = state,
+                        onSetShowBadges = { enabled -> viewModel.setShowBadges(enabled) },
+                        onSetSwipeDown = { enabled -> viewModel.setSwipeDownEnabled(enabled) },
+                        onSetDoubleTap = { enabled -> viewModel.setDoubleTapToSleep(enabled) },
+                        onSetGlobalActionCenter = { viewModel.setGlobalActionCenter(it) }
+                    )
+                    SettingsPageType.SYSTEM_ADVANCED -> SystemAdvancedPage(
+                        state = state,
+                        onSetSecureHiddenApps = { secure -> viewModel.setSecureHiddenApps(secure) }
                     )
                 }
             }

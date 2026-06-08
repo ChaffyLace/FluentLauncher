@@ -1,3 +1,9 @@
+/**
+ * @file SettingsViewModel.kt
+ * @description Architecture component handling the business logic and state
+ * for all settings, ensuring safe memory management and robust data persistence.
+ */
+
 package com.example.fluentui.ui.settings
 
 import android.app.Application
@@ -24,41 +30,57 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _uiState = MutableStateFlow(SettingsState())
     val uiState: StateFlow<SettingsState> = _uiState.asStateFlow()
 
+
+
     init {
         observeSettings()
     }
 
     private fun observeSettings() {
         viewModelScope.launch {
-            combine(
-                settingsManager.columnCount,
-                settingsManager.rowCount,
-                settingsManager.iconSize,
-                settingsManager.fontSize,
-                settingsManager.verticalSpacing,
-                settingsManager.showLabels,
-                settingsManager.isVerticalScroll,
-                settingsManager.accentColor,
-                settingsManager.transparencyEnabled,
-                settingsManager.wallpaperType,
-                settingsManager.wallpaperValue,
-                settingsManager.hiddenApps
-            ) { params ->
-                val cols = params[0] as Int
-                val rows = params[1] as Int
-                val iSize = params[2] as Float
-                val fSize = params[3] as Float
-                val vSpace = params[4] as Float
-                val labels = params[5] as Boolean
-                val vert = params[6] as Boolean
-                val accent = params[7] as Int
-                val transp = params[8] as Boolean
-                val wpType = params[9] as String
-                val wpVal = params[10] as String
-                @Suppress("UNCHECKED_CAST")
-                val hidden = params[11] as Set<String>
+            val flows = listOf(
+                settingsManager.columnCount,               // 0
+                settingsManager.rowCount,                  // 1
+                settingsManager.iconSize,                  // 2
+                settingsManager.fontSize,                  // 3
+                settingsManager.verticalSpacing,           // 4
+                settingsManager.showLabels,                // 5
+                settingsManager.isVerticalScroll,          // 6
+                settingsManager.accentColor,               // 7
+                settingsManager.transparencyEnabled,       // 8
+                settingsManager.wallpaperType,             // 9
+                settingsManager.wallpaperValue,            // 10
+                settingsManager.hiddenApps,                // 11
+                settingsManager.showDrawerSearch,          // 12
+                settingsManager.autoOpenKeyboard,          // 13
+                settingsManager.showBadges,                // 14
+                settingsManager.swipeDownEnabled,          // 15
+                settingsManager.secureHiddenApps,          // 16
+                settingsManager.globalActionCenterEnabled  // 17
+            )
 
-                SettingsState(
+            combine(flows) { params ->
+                val cols                = params[0]  as Int
+                val rows                = params[1]  as Int
+                val iSize               = params[2]  as Float
+                val fSize               = params[3]  as Float
+                val vSpace              = params[4]  as Float
+                val labels              = params[5]  as Boolean
+                val vert                = params[6]  as Boolean
+                val accent              = params[7]  as Int
+                val transp              = params[8]  as Boolean
+                val wpType              = params[9]  as String
+                val wpVal               = params[10] as String
+                @Suppress("UNCHECKED_CAST")
+                val hidden              = params[11] as Set<String>
+                val drawerSearch        = params[12] as Boolean
+                val autoKeyboard        = params[13] as Boolean
+                val badges              = params[14] as Boolean
+                val swipeDown           = params[15] as Boolean
+                val secureHidden        = params[16] as Boolean
+                val globalActionCenter  = params[17] as Boolean
+
+                _uiState.value.copy(
                     columnCount = cols,
                     rowCount = rows,
                     iconSize = iSize,
@@ -71,12 +93,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     wallpaperType = wpType,
                     wallpaperValue = wpVal,
                     hiddenApps = hidden,
-                    // On garde l'image déjà chargée pour éviter le clignotement
-                    currentWallpaperBitmap = _uiState.value.currentWallpaperBitmap,
-                    isLoadingWallpaper = _uiState.value.isLoadingWallpaper
+                    showDrawerSearch = drawerSearch,
+                    autoOpenKeyboard = autoKeyboard,
+                    showBadges = badges,
+                    swipeDownEnabled = swipeDown,
+                    secureHiddenApps = secureHidden,
+                    globalActionCenterEnabled = globalActionCenter
                 )
             }.collect { newState ->
-                // Si le type ou la valeur du wallpaper change, on recharge l'image
                 if (newState.wallpaperType != _uiState.value.wallpaperType ||
                     newState.wallpaperValue != _uiState.value.wallpaperValue) {
                     loadWallpaper(newState.wallpaperType, newState.wallpaperValue)
@@ -85,6 +109,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
 
     private fun loadWallpaper(type: String, value: String) {
         viewModelScope.launch {
@@ -95,13 +120,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     when (type) {
                         "URI" -> {
                             val uri = Uri.parse(value)
-                            // On charge une version optimisée (max 720px de haut) pour la prévisualisation
                             decodeSampledBitmapFromUri(context, uri, 500, 720)?.asImageBitmap()
                         }
                         "RES" -> {
                             val resId = value.toIntOrNull()
                             if (resId != null) {
-                                // On charge une version optimisée pour les ressources aussi
                                 decodeSampledBitmapFromResource(context, resId, 500, 720)?.asImageBitmap()
                             } else null
                         }
@@ -117,51 +140,38 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // --- FONCTIONS UTILITAIRES POUR RÉDUIRE LA TAILLE DES IMAGES (Anti-Crash) ---
+    // --- MEMORY-SAFE IMAGE DECODING ---
 
     private fun decodeSampledBitmapFromUri(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
-            // 1. On lit seulement les dimensions (sans charger l'image en mémoire)
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, options)
             }
-
-            // 2. On calcule le facteur de réduction (sample size)
             options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
-
-            // 3. On lit l'image pour de vrai avec la réduction
             options.inJustDecodeBounds = false
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, options)
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun decodeSampledBitmapFromResource(context: Context, resId: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeResource(context.resources, resId, options)
-
             options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
             options.inJustDecodeBounds = false
-
             BitmapFactory.decodeResource(context.resources, resId, options)
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
         val (height: Int, width: Int) = options.run { outHeight to outWidth }
         var inSampleSize = 1
-
         if (height > reqHeight || width > reqWidth) {
             val halfHeight: Int = height / 2
             val halfWidth: Int = width / 2
-
             while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
                 inSampleSize *= 2
             }
@@ -169,7 +179,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return inSampleSize
     }
 
-    // --- ACTIONS UTILISATEUR (CORRIGÉES POUR SettingsManager) ---
+    // =========================================================================
+    // MUTATORS: WRITING TO PERSISTENCE
+    // =========================================================================
 
     fun setColumnCount(count: Int) = viewModelScope.launch { settingsManager.setColumnCount(count) }
     fun setRowCount(count: Int) = viewModelScope.launch { settingsManager.setRowCount(count) }
@@ -179,24 +191,26 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setShowLabels(show: Boolean) = viewModelScope.launch { settingsManager.setShowLabels(show) }
     fun setVerticalScroll(isVertical: Boolean) = viewModelScope.launch { settingsManager.setVerticalScroll(isVertical) }
     fun setAccentColor(color: Color) = viewModelScope.launch { settingsManager.setAccentColor(color.toArgb()) }
-
-    // CORRECTION 1 : Le nom est setTransparency dans le manager
     fun setTransparency(enabled: Boolean) = viewModelScope.launch { settingsManager.setTransparency(enabled) }
 
-    // CORRECTION 2 : Gestion de la liste pour les apps masquées
-    fun setAppHidden(pkg: String, hidden: Boolean) = viewModelScope.launch {
-        val currentHidden = _uiState.value.hiddenApps.toMutableSet()
-        if (hidden) {
-            currentHidden.add(pkg)
-        } else {
-            currentHidden.remove(pkg)
-        }
-        settingsManager.setHiddenApps(currentHidden)
-    }
-
-    // CORRECTION 3 : Appel des deux fonctions distinctes du manager
     fun setWallpaper(type: String, value: String) = viewModelScope.launch {
         settingsManager.setWallpaperType(type)
         settingsManager.setWallpaperValue(value)
     }
+
+    fun setAppHidden(pkg: String, hidden: Boolean) = viewModelScope.launch {
+        val currentHidden = _uiState.value.hiddenApps.toMutableSet()
+        if (hidden) currentHidden.add(pkg) else currentHidden.remove(pkg)
+        settingsManager.setHiddenApps(currentHidden)
+    }
+
+    fun setShowBadges(enabled: Boolean) = viewModelScope.launch { settingsManager.setShowBadges(enabled) }
+    fun setSwipeDownEnabled(enabled: Boolean) = viewModelScope.launch { settingsManager.setSwipeDownEnabled(enabled) }
+    fun setDoubleTapToSleep(enabled: Boolean) = viewModelScope.launch { settingsManager.setDoubleTapToSleep(enabled) }
+    fun setShowDrawerSearch(enabled: Boolean) = viewModelScope.launch { settingsManager.setShowDrawerSearch(enabled) }
+    fun setAutoOpenKeyboard(enabled: Boolean) = viewModelScope.launch { settingsManager.setAutoOpenKeyboard(enabled) }
+    fun setSecureHiddenApps(enabled: Boolean) = viewModelScope.launch { settingsManager.setSecureHiddenApps(enabled) }
+
+    // Toggles the Global Action Center functionality
+    fun setGlobalActionCenter(enabled: Boolean) = viewModelScope.launch { settingsManager.setGlobalActionCenterEnabled(enabled) }
 }
